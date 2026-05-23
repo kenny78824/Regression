@@ -50,11 +50,36 @@
   </script>
 
   <!-- CDN libraries (loaded synchronously before app script) -->
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/mathjs@13.0.3/lib/browser/math.js" crossorigin="anonymous"></script>
+  <!-- React -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+  <!-- prop-types (required by Recharts) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js" crossorigin="anonymous"></script>
+  <!-- Recharts via jsdelivr -->
+  <script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js" crossorigin="anonymous"></script>
+  <!-- SheetJS -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" crossorigin="anonymous"></script>
+  <!-- mathjs - use v10 which reliably exposes global 'math' -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/10.6.4/math.min.js" crossorigin="anonymous"></script>
+  <!-- Verify all libs loaded -->
+  <script>
+  (function(){
+    var missing = [];
+    if(typeof React==='undefined') missing.push('React');
+    if(typeof PropTypes==='undefined') missing.push('PropTypes');
+    if(typeof ReactDOM==='undefined') missing.push('ReactDOM');
+    if(typeof Recharts==='undefined') missing.push('Recharts');
+    if(typeof XLSX==='undefined') missing.push('XLSX');
+    if(typeof math==='undefined') missing.push('math');
+    if(missing.length > 0) {
+      document.getElementById('root').innerHTML =
+        '<div style="color:#ffa0a0;padding:32px;font-family:monospace;background:#06101a;min-height:100vh">' +
+        '<h2 style="color:#f06464;margin-bottom:12px">CDN Load Error</h2>' +
+        '<pre>Failed to load: ' + missing.join(', ') + '</pre></div>';
+      throw new Error('CDN failed: ' + missing.join(', '));
+    }
+  })();
+  </script>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
 
   <!-- App (runs after CDN scripts above have loaded) -->
