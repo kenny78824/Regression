@@ -24,6 +24,14 @@
 <body>
   <div id="root"></div>
   <script>
+window.onerror = function(msg, src, line, col, err) {
+  document.getElementById('root').innerHTML = 
+    '<div style="color:#f06464;padding:32px;font-family:monospace;background:#06101a;min-height:100vh">' +
+    '<h2 style="color:#f08080;margin-bottom:16px">Error (line ' + line + ')</h2>' +
+    '<pre style="font-size:11px;white-space:pre-wrap">' + String(msg).replace(/</g,'&lt;') + '</pre></div>';
+};
+
+<script>
 const { useState, useCallback, useRef, useMemo } = React;
 const {
   ScatterChart, ComposedChart, Scatter, Line, XAxis, YAxis, CartesianGrid,
@@ -34,7 +42,7 @@ const {
 // ════════════════════════ MATH UTILS ════════════════════════
 const mMul  = (A,B)=>math.multiply(math.matrix(A),math.matrix(B)).toArray();
 const mTrans= A=>math.transpose(math.matrix(A)).toArray();
-const mInv  = A=>{ try{return math.inv(math.matrix(A)).toArray();}catch{return null;} };
+const mInv  = A=>{ try{return math.inv(math.matrix(A)).toArray();}catch(_e){return null;} };
 const flat  = A=>A.map(r=>Array.isArray(r)?r[0]:r);
 const addB  = X=>X.map(r=>[1,...r]);
 const avg   = a=>a.length?a.reduce((s,v)=>s+v,0)/a.length:0;
@@ -1157,7 +1165,7 @@ function App(){
         return 0;
       };
       return oatSens(predictFn,allX,xCols);
-    }catch{return null;}
+    }catch(_e){return null;}
   },[result,trainRows,xCols]);
 
   const downloadEmulator=()=>{
@@ -1217,7 +1225,7 @@ function App(){
           const vals=pklModel.feature_names.map(fn=>parseFloat(row[fn]));
           if(vals.some(isNaN))return{...row,[`${pklModel.target_name}_pred`]:'ERROR'};
           return{...row,[`${pklModel.target_name}_pred`]:+runPklPrediction(pklModel,vals).toFixed(6)};
-        }catch{return{...row,[`${pklModel.target_name}_pred`]:'ERROR'};}
+        }catch(_e){return{...row,[`${pklModel.target_name}_pred`]:'ERROR'};}
       });
       setBatchResults(out);
     });
@@ -1415,8 +1423,18 @@ function App(){
 }
 
 
-const _root = ReactDOM.createRoot(document.getElementById('root'));
-_root.render(React.createElement(App));
+try {
+  const _root = ReactDOM.createRoot(document.getElementById('root'));
+  _root.render(React.createElement(App));
+} catch(err) {
+  document.getElementById('root').innerHTML = 
+    '<div style="color:#f06464;padding:32px;font-family:monospace;background:#06101a;min-height:100vh">' +
+    '<h2 style="margin-bottom:16px;color:#f08080">JavaScript Error</h2>' +
+    '<pre style="font-size:11px;white-space:pre-wrap;color:#ffa0a0">' + 
+    String(err.stack || err.message || err).replace(/</g,'&lt;') + 
+    '</pre></div>';
+  console.error('App render error:', err);
+}
 
   </script>
 </body>
