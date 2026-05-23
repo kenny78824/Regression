@@ -3,13 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>迴歸分析引擎 — Regression Lab</title>
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="https://unpkg.com/mathjs@13.0.3/lib/browser/math.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
+  <title>迴歸分析引擎</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0;}
     body{background:#06101a;color:#c8d8e8;font-family:'Syne',sans-serif;}
@@ -19,19 +13,53 @@
     ::-webkit-scrollbar-thumb{background:#1a3448;border-radius:3px;}
     ::-webkit-scrollbar-thumb:hover{background:#2a4458;}
     select option{background:#0c1e2e;}
+    #splash{display:flex;flex-direction:column;align-items:center;justify-content:center;
+      height:100vh;gap:16px;color:#4a6878;font-family:monospace;font-size:13px;letter-spacing:2px;}
+    #splash-dot{width:36px;height:36px;border:3px solid #1a3448;border-top-color:#40c8f0;
+      border-radius:50%;animation:sp 0.8s linear infinite;}
+    @keyframes sp{to{transform:rotate(360deg);}}
+    #err{display:none;color:#ffa0a0;padding:32px;font-family:monospace;
+      background:#06101a;min-height:100vh;}
+    #err h2{color:#f06464;margin-bottom:12px;font-size:18px;}
+    #err pre{font-size:11px;white-space:pre-wrap;line-height:1.5;}
   </style>
 </head>
 <body>
-  <div id="root"></div>
-  <script>
-window.onerror = function(msg, src, line, col, err) {
-  document.getElementById('root').innerHTML = 
-    '<div style="color:#f06464;padding:32px;font-family:monospace;background:#06101a;min-height:100vh">' +
-    '<h2 style="color:#f08080;margin-bottom:16px">Error (line ' + line + ')</h2>' +
-    '<pre style="font-size:11px;white-space:pre-wrap">' + String(msg).replace(/</g,'&lt;') + '</pre></div>';
-};
+  <div id="root">
+    <div id="splash">
+      <div id="splash-dot"></div>
+      <div>REGRESSION LAB 載入中…</div>
+    </div>
+  </div>
+  <div id="err"><h2>Error</h2><pre id="err-msg"></pre></div>
 
-<script>
+  <script>
+  function showErr(msg) {
+    document.getElementById('root').style.display = 'none';
+    var el = document.getElementById('err');
+    el.style.display = 'block';
+    document.getElementById('err-msg').textContent = msg;
+  }
+  window.onerror = function(msg, src, line, col, err) {
+    showErr((err && err.stack) ? err.stack : (msg + ' (' + src + ':' + line + ')'));
+    return true;
+  };
+  window.addEventListener('unhandledrejection', function(ev) {
+    showErr('Unhandled promise: ' + (ev.reason && ev.reason.stack ? ev.reason.stack : ev.reason));
+  });
+  </script>
+
+  <!-- CDN libraries (loaded synchronously before app script) -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/mathjs@13.0.3/lib/browser/math.js" crossorigin="anonymous"></script>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
+
+  <!-- App (runs after CDN scripts above have loaded) -->
+  <script>
+function initApp() {
 const { useState, useCallback, useRef, useMemo } = React;
 const {
   ScatterChart, ComposedChart, Scatter, Line, XAxis, YAxis, CartesianGrid,
@@ -1436,6 +1464,10 @@ try {
   console.error('App render error:', err);
 }
 
+  const _root = ReactDOM.createRoot(document.getElementById('root'));
+  _root.render(React.createElement(App));
+}
+initApp();
   </script>
 </body>
 </html>
