@@ -5,23 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>迴歸分析引擎 — Regression Lab</title>
 
-  <!-- React 18 -->
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <!-- Sucrase: fast JSX transformer (no full Babel needed) -->
+  <script src="https://unpkg.com/sucrase@3.35.0/dist/sucrase.js"></script>
 
-  <!-- Babel Standalone (JSX transpiler) -->
-  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+  <!-- React 18 -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
   <!-- Recharts -->
   <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
 
-  <!-- SheetJS (XLSX) -->
+  <!-- SheetJS -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 
   <!-- mathjs -->
   <script src="https://unpkg.com/mathjs@13.0.3/lib/browser/math.js"></script>
 
-  <!-- Google Fonts -->
+  <!-- Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
 
   <style>
@@ -38,14 +38,13 @@
 <body>
   <div id="root"></div>
 
-  <script type="text/babel" data-presets="react" data-plugins="transform-optional-chaining,transform-nullish-coalescing-operator,transform-class-properties,transform-optional-catch-binding">
-    // ── Globals from CDN ──
-    const { useState, useCallback, useRef, useMemo } = React;
-    const {
-      ScatterChart, ComposedChart, Scatter, Line, XAxis, YAxis, CartesianGrid,
-      Tooltip, ResponsiveContainer, Legend, BarChart, Bar, ReferenceLine
-    } = Recharts;
-    // XLSX and math are already global
+  <script id="app-source" type="text/jsx-source">
+const { useState, useCallback, useRef, useMemo } = React;
+const {
+  ScatterChart, ComposedChart, Scatter, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, Legend, BarChart, Bar, ReferenceLine
+} = Recharts;
+
 
 // ════════════════════════ MATH UTILS ════════════════════════
 const mMul  = (A,B)=>math.multiply(math.matrix(A),math.matrix(B)).toArray();
@@ -2089,9 +2088,31 @@ function App(){
   );
 }
 
-    // ── Mount ──
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<App />);
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(App));
+  </script>
+
+  <script>
+    // Use Sucrase to transpile JSX at runtime (10x faster than Babel)
+    window.addEventListener('DOMContentLoaded', function() {
+      try {
+        var src = document.getElementById('app-source').textContent;
+        var compiled = sucrase.transform(src, {
+          transforms: ['jsx'],
+          jsxRuntime: 'classic',
+          production: true
+        }).code;
+        var script = document.createElement('script');
+        script.textContent = compiled;
+        document.head.appendChild(script);
+      } catch(e) {
+        document.getElementById('root').innerHTML =
+          '<div style="color:#f06464;padding:40px;font-family:monospace">' +
+          '<h2>Compile Error</h2><pre>' + e.message + '</pre></div>';
+        console.error('Sucrase error:', e);
+      }
+    });
   </script>
 </body>
 </html>
