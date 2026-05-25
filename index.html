@@ -650,7 +650,188 @@ function cvTree(nd){
     left:cvTree(nd.left),right:cvTree(nd.right)};
 }
 
-// ════════════════════════ PICKLE WRITER — protocol 2 ════════════════════════
+// ════════════════════════════════════════════════════════════════
+// CLASSIFICATION ENGINE
+// ════════════════════════════════════════════════════════════════
+
+// ── Label encoder ──
+function encodeLabels(y){
+  const classes=[...new Set(y)].sort((a,b)=>String(a).localeCompare(String(b)));
+  const idx=Object.fromEntries(classes.map((c,i)=>[c,i]));
+  return{classes,encoded:y.map(v=>idx[v]),idx};
+}
+
+// ── Classification metrics ──
+function classMetrics(yTrue,yPred,classes){
+  const K=classes.length,n=yTrue.length;
+  const cm=Array.from({length:K},()=>new Array(K).fill(0));
+  let correct=0;
+  for(let i=0;i<n;i++){if(yTrue[i]===yPred[i])correct++;cm[yTrue[i]][yPred[i]]++;}
+  const accuracy=correct/n;
+  const perClass=classes.map((_,k)=>{
+    const tp=cm[k][k];
+    const fp=cm.reduce((s,r)=>s+r[k],0)-tp;
+    const fn=cm[k].reduce((s,v)=>s+v,0)-tp;
+    const prec=tp+fp>0?tp/(tp+fp):0;
+    const rec=tp+fn>0?tp/(tp+fn):0;
+    const f1=prec+rec>0?2*prec*rec/(prec+rec):0;
+    return{tp,fp,fn,prec,rec,f1,support:tp+fn};
+  });
+  const macroPrec=perClass.reduce((s,c)=>s+c.prec,0)/K;
+  const macroRec=perClass.reduce((s,c)=>s+c.rec,0)/K;
+  const macroF1=perClass.reduce((s,c)=>s+c.f1,0)/K;
+  return{accuracy,cm,perClass,macroPrec,macroRec,macroF1,n};
+}
+
+// ── Decision Tree (Classification, Gini) ──
+function gini(arr,K){
+  const n=arr.length;if(!n)return 0;
+  const cnt=new Array(K).fill(0);arr.forEach(v=>cnt[v]++);
+  return 1-cnt.reduce((s,c)=>s+(c/n)**2,0);
+}
+function buildDTC(X,y,K,d,maxD,minL){
+  const n=y.length;
+  const cnt=new Array(K).fill(0);y.forEach(v=>cnt[v]++);
+  const leafVal=cnt.indexOf(Math.max(...cnt));
+  if(d>=maxD||n<=minL*2)return{leaf:true,val:leafVal,n};
+  const p=X[0].length;let bG=-Infinity,bF=-1,bT=null;const bV=gini(y,K);
+  for(let f=0;f<p;f++){
+    const uniq=[...new Set(X.map(r=>r[f]))].sort((a,b)=>a-b);
+    const thrs=uniq.length>12?Array.from({length:12},(_,i)=>uniq[Math.floor(i*uniq.length/12)]):uniq.slice(0,-1).map((v,i)=>(v+uniq[i+1])/2);
+    for(const t of thrs){
+      const li=[],ri=[];X.forEach((r,k)=>(r[f]<=t?li:ri).push(k));
+      if(li.length<minL||ri.length<minL)continue;
+      const g=bV-(li.length/n*gini(li.map(k=>y[k]),K)+ri.length/n*gini(ri.map(k=>y[k]),K));
+      if(g>bG){bG=g;bF=f;bT=t;}
+    }
+  }
+  if(bF===-1)return{leaf:true,val:leafVal,n};
+  const li=X.map((r,k)=>r[bF]<=bT?k:-1).filter(k=>k>=0);
+  const ri=X.map((r,k)=>r[bF]>bT?k:-1).filter(k=>k>=0);
+  return{leaf:false,feat:bF,thr:bT,n,left:buildDTC(li.map(k=>X[k]),li.map(k=>y[k]),K,d+1,maxD,minL),right:buildDTC(ri.map(k=>X[k]),ri.map(k=>y[k]),K,d+1,maxD,minL)};
+}
+function predDTC(nd,x){if(nd.leaf)return nd.val;return x[nd.feat]<=nd.thr?predDTC(nd.left,x):predDTC(nd.right,x);}
+function buildRFC(X,y,K,nT,maxD,minL){
+  const n=X.length;
+  return Array.from({length:nT},()=>{const idx=Array.from({length:n},()=>Math.floor(Math.random()*n));return buildDTC(idx.map(i=>X[i]),idx.map(i=>y[i]),K,0,maxD,minL);});
+}
+function predRFC(trees,x,K){
+  const votes=new Array(K).fill(0);
+  trees.forEach(t=>votes[predDTC(t,x)]++);
+  return votes.indexOf(Math.max(...votes));
+}
+
+// ── KNN Classifier ──
+function knn(Xtr,ytr,xq,k){
+  const dists=Xtr.map((xi,i)=>({d:xi.reduce((s,v,j)=>s+(v-xq[j])**2,0),y:ytr[i]}));
+  dists.sort((a,b)=>a.d-b.d);
+  const votes={};
+  dists.slice(0,k).forEach(p=>{votes[p.y]=(votes[p.y]||0)+1;});
+  return +Object.entries(votes).sort((a,b)=>b[1]-a[1])[0][0];
+}
+
+// ── Gaussian Naive Bayes ──
+function trainNB(X,y,K){
+  const params=Array.from({length:K},()=>({mean:[],std:[],prior:0}));
+  const p=X[0].length;
+  for(let k=0;k<K;k++){
+    const Xk=X.filter((_,i)=>y[i]===k);
+    params[k].prior=Xk.length/X.length;
+    for(let j=0;j<p;j++){
+      const col=Xk.map(r=>r[j]);
+      const m=col.reduce((s,v)=>s+v,0)/col.length;
+      const s=Math.sqrt(col.reduce((a,v)=>a+(v-m)**2,0)/col.length)||1e-6;
+      params[k].mean.push(m);params[k].std.push(s);
+    }
+  }
+  return params;
+}
+function predNB(params,x){
+  const scores=params.map(function(p){
+    let lp=Math.log(p.prior+1e-10);
+    x.forEach(function(v,j){const s=p.std[j];const diff=v-p.mean[j];lp+=(-(diff*diff)/(2*s*s))-Math.log(s*Math.sqrt(2*Math.PI)+1e-10);});
+    return lp;
+  });
+  return scores.indexOf(Math.max(...scores));
+}
+
+// ── Logistic Regression (softmax, gradient descent) ──
+function trainLogReg(X,y,K,lr,maxIt){
+  const n=X.length,p=X[0].length;
+  // Normalise
+  const means=X[0].map((_,j)=>X.reduce((s,r)=>s+r[j],0)/n);
+  const stds=X[0].map((_,j)=>{const m=means[j];return Math.sqrt(X.reduce((s,r)=>s+(r[j]-m)**2,0)/n)||1;});
+  const Xn=X.map(r=>r.map((v,j)=>(v-means[j])/stds[j]));
+  // W: K × (p+1)
+  const W=Array.from({length:K},()=>new Array(p+1).fill(0));
+  for(let it=0;it<maxIt;it++){
+    const grads=Array.from({length:K},()=>new Array(p+1).fill(0));
+    for(let i=0;i<n;i++){
+      const xi=[1,...Xn[i]];
+      const logits=W.map(w=>w.reduce((s,wj,j)=>s+wj*xi[j],0));
+      const maxL=Math.max(...logits);
+      const exps=logits.map(l=>Math.exp(l-maxL));
+      const sumE=exps.reduce((s,v)=>s+v,0);
+      const probs=exps.map(e=>e/sumE);
+      for(let k=0;k<K;k++){
+        const err=probs[k]-(y[i]===k?1:0);
+        xi.forEach((xij,j)=>{grads[k][j]+=err*xij;});
+      }
+    }
+    for(let k=0;k<K;k++)W[k]=W[k].map((w,j)=>w-lr*grads[k][j]/n);
+  }
+  return{W,means,stds};
+}
+function predLogReg(model,x){
+  const xi=[1,...x.map((v,j)=>(v-model.means[j])/model.stds[j])];
+  const logits=model.W.map(w=>w.reduce((s,wj,j)=>s+wj*xi[j],0));
+  return logits.indexOf(Math.max(...logits));
+}
+
+// ── Classification algorithm runner ──
+function runClsAlgo(name,Xtr,ytr,Xts,yts,K){
+  const preds={train:[],test:[]};
+  try{
+    if(name==="lr"){
+      const m=trainLogReg(Xtr,ytr,K,0.1,200);
+      preds.train=Xtr.map(x=>predLogReg(m,x));
+      preds.test=Xts.map(x=>predLogReg(m,x));
+    } else if(name==="dt"){
+      const tree=buildDTC(Xtr,ytr,K,0,6,2);
+      preds.train=Xtr.map(x=>predDTC(tree,x));
+      preds.test=Xts.map(x=>predDTC(tree,x));
+    } else if(name==="rf"){
+      const trees=buildRFC(Xtr,ytr,K,20,5,2);
+      preds.train=Xtr.map(x=>predRFC(trees,x,K));
+      preds.test=Xts.map(x=>predRFC(trees,x,K));
+    } else if(name==="knn3"||name==="knn7"){
+      const k=name==="knn3"?3:7;
+      preds.train=Xtr.map(x=>knn(Xtr,ytr,x,k));
+      preds.test=Xts.map(x=>knn(Xtr,ytr,x,k));
+    } else if(name==="nb"){
+      const m=trainNB(Xtr,ytr,K);
+      preds.train=Xtr.map(x=>predNB(m,x));
+      preds.test=Xts.map(x=>predNB(m,x));
+    } else return null;
+    return{
+      trainM:classMetrics(ytr,preds.train,Array.from({length:K},(_,i)=>i)),
+      testM:yts.length?classMetrics(yts,preds.test,Array.from({length:K},(_,i)=>i)):null,
+      trainPred:preds.train,testPred:preds.test
+    };
+  }catch(_e){return null;}
+}
+
+const CLS_ALGOS={
+  lr:    {label:"Logistic Regression",icon:"📈",color:"#40c8f0",desc:"Softmax 多分類"},
+  dt:    {label:"Decision Tree",      icon:"🌲",color:"#60d090",desc:"Gini 不純度"},
+  rf:    {label:"Random Forest",      icon:"🌳",color:"#80f060",desc:"集成學習，20 棵樹"},
+  knn3:  {label:"KNN (k=3)",          icon:"🔵",color:"#f0c040",desc:"k=3 最近鄰"},
+  knn7:  {label:"KNN (k=7)",          icon:"🟡",color:"#f09040",desc:"k=7 最近鄰"},
+  nb:    {label:"Gaussian Naive Bayes",icon:"🧮",color:"#c080f0",desc:"高斯貝式分類"},
+  best:  {label:"⭐ 最佳演算法",      icon:"⭐",color:"#ffe040",desc:"自動比較所有模型"},
+};
+
+
 class PickleWriter{
   constructor(){this.buf=[];}
   b(v){this.buf.push(v&0xFF);}
@@ -1056,6 +1237,323 @@ function DoePage({factors,setFactors,method,setMethod,n,setN,center,setCenter,
   );
 }
 
+// ════════════════════════ CLASSIFICATION PAGE COMPONENT ════════════════════════
+function ClassificationPage(){
+  const[trainRows,setTrainRows]=useState([]);
+  const[headers,setHeaders]=useState([]);
+  const[trainFile,setTrainFile]=useState(null);
+  const[xCols,setXCols]=useState([]);
+  const[yCol,setYCol]=useState("");
+  const[algo,setAlgo]=useState("dt");
+  const[splitR,setSplitR]=useState(80);
+  const[testMode,setTestMode]=useState("split");
+  const[testFile,setTestFile]=useState(null);
+  const[testRows,setTestRows]=useState([]);
+  const[result,setResult]=useState(null);
+  const[bestAll,setBestAll]=useState(null);
+  const[running,setRunning]=useState(false);
+  const[clsTab,setClsTab]=useState("overview");
+  const[demoLoaded,setDemoLoaded]=useState(false);
+  const fileRef=useRef();
+  const testFileRef=useRef();
+
+  const loadFile=useCallback(function(f,isTrain){
+    parseFile(f,function(data){
+      const hdrs=Object.keys(data[0]||{});
+      if(isTrain){
+        setTrainFile(f);setHeaders(hdrs);setTrainRows(data);
+        setXCols(hdrs.slice(0,-1));setYCol(hdrs[hdrs.length-1]||"");
+        setResult(null);setBestAll(null);
+      } else {
+        setTestFile(f);setTestRows(data);
+      }
+    });
+  },[]);
+
+  const toggleX=function(col){setXCols(function(p){return p.includes(col)?p.filter(function(c){return c!==col;}):[...p,col];});};
+
+  function genDemoData(){
+    const n=120;
+    return Array.from({length:n},function(){
+      const x1=(Math.random()-0.5)*10,x2=(Math.random()-0.5)*10;
+      const x3=(Math.random()-0.5)*10;
+      let cls;
+      if(x1+x2>4)cls="A";
+      else if(x1-x2<-4)cls="B";
+      else if(Math.abs(x3)>3)cls="C";
+      else cls="D";
+      return{Feature1:+x1.toFixed(2),Feature2:+x2.toFixed(2),Feature3:+x3.toFixed(2),Class:cls};
+    });
+  }
+
+  const loadDemo=function(){
+    const data=genDemoData();
+    const hdrs=Object.keys(data[0]);
+    setTrainFile({name:"demo_classification.xlsx"});
+    setHeaders(hdrs);setTrainRows(data);
+    setXCols(hdrs.slice(0,-1));setYCol(hdrs[hdrs.length-1]||"");
+    setResult(null);setBestAll(null);setDemoLoaded(true);
+  };
+
+  const run=function(){
+    if(!trainRows.length||!xCols.length||!yCol)return;
+    setRunning(true);
+    setTimeout(function(){
+      try{
+        const allX=trainRows.map(function(r){return xCols.map(function(c){return parseFloat(r[c]);});});
+        const allY=trainRows.map(function(r){return r[yCol];});
+        const ok=allX.map(function(x,i){return x.every(function(v){return!isNaN(v);})||allY[i]!=null;});
+        const cX=allX.filter(function(_,i){return ok[i]&&!allX[i].some(isNaN);});
+        const cYraw=allY.filter(function(_,i){return ok[i]&&!allX[i].some(isNaN);});
+        const enc=encodeLabels(cYraw);
+        const cY=enc.encoded;
+        const K=enc.classes.length;
+
+        let Xtr,ytr,Xts=[],yts=[];
+        if(testMode==="upload"&&testRows.length){
+          Xtr=cX;ytr=cY;
+          const tx=testRows.map(function(r){return xCols.map(function(c){return parseFloat(r[c]);});});
+          const tyraw=testRows.map(function(r){return r[yCol];});
+          const xOk=tx.map(function(x){return x.every(function(v){return!isNaN(v);});});
+          Xts=tx.filter(function(_,i){return xOk[i];});
+          yts=tyraw.filter(function(_,i){return xOk[i];}).map(function(v){return enc.idx[v]!==undefined?enc.idx[v]:-1;}).filter(function(v){return v>=0;});
+        } else {
+          const idx=Array.from({length:cX.length},function(_,i){return i;}).sort(function(){return Math.random()-0.5;});
+          const si=Math.floor(cX.length*splitR/100);
+          Xtr=idx.slice(0,si).map(function(i){return cX[i];});
+          ytr=idx.slice(0,si).map(function(i){return cY[i];});
+          Xts=idx.slice(si).map(function(i){return cX[i];});
+          yts=idx.slice(si).map(function(i){return cY[i];});
+        }
+
+        if(algo==="best"){
+          const names=["lr","dt","rf","knn3","nb"];
+          const all=names.map(function(n){return runClsAlgo(n,Xtr,ytr,Xts,yts,K);}).filter(Boolean);
+          const sc=all.map(function(r,i){return Object.assign({},r,{name:names[i],score:(r.testM??r.trainM)?.accuracy??0});});
+          sc.sort(function(a,b){return b.score-a.score;});
+          setBestAll(sc.map(function(r,i){return Object.assign({},r,{algoName:["lr","dt","rf","knn3","nb"][i<5?names.indexOf(r.name||names[i]):i]||names[i]});}));
+          setResult(Object.assign({},sc[0],{classes:enc.classes,algoName:algo}));
+        } else {
+          const r=runClsAlgo(algo,Xtr,ytr,Xts,yts,K);
+          setResult(r?Object.assign({},r,{classes:enc.classes,algoName:algo}):null);
+          setBestAll(null);
+        }
+        setClsTab("overview");
+      }catch(_e){console.error(_e);}
+      setRunning(false);
+    },80);
+  };
+
+  const fmtPct=function(v){return v!=null?(v*100).toFixed(1)+"%":"—";};
+  const fmtN=function(v){return v!=null?v.toFixed(4):"—";};
+
+  const classes=result?result.classes:[];
+  const testM=result?result.testM:null;
+  const trainM=result?result.trainM:null;
+
+  return React.createElement('div',{style:{display:"grid",gridTemplateColumns:"300px 1fr",gap:18,alignItems:"start"}},
+
+    // ── LEFT PANEL ──
+    React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},
+
+      // Data import
+      React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16}},
+        React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},"① 資料匯入"),
+        React.createElement(DropZone,{label:"拖曳訓練資料 .xlsx / .csv",file:trainFile,onFile:function(f){loadFile(f,true);},accent:C.cyan}),
+        React.createElement('div',{style:{margin:"8px 0",textAlign:"center",fontSize:11,color:C.dim}},"— 或 —"),
+        React.createElement('button',{onClick:loadDemo,style:{width:"100%",padding:"9px",borderRadius:8,border:"1px solid "+C.green+"44",background:C.green+"11",color:C.green,fontSize:12,fontWeight:700,cursor:"pointer"}},"🚀 載入示範資料（4分類）"),
+        trainRows.length>0&&React.createElement('div',{style:{marginTop:8,fontSize:11,color:C.dim,fontFamily:"monospace"}},
+          "✓ ",React.createElement('span',{style:{color:C.cyan}},trainRows.length)," 筆 · ",
+          React.createElement('span',{style:{color:C.amber}},headers.length)," 欄",
+          demoLoaded&&React.createElement('span',{style:{color:C.green,marginLeft:6}},"[示範]")
+        ),
+        // Test data
+        React.createElement('div',{style:{marginTop:14,marginBottom:8,fontSize:10,letterSpacing:1,color:C.dim,textTransform:"uppercase"}},"測試資料"),
+        React.createElement('div',{style:{display:"flex",gap:6,marginBottom:8}},
+          React.createElement('button',{onClick:function(){setTestMode("split");},style:{flex:1,padding:"6px 0",borderRadius:6,border:"1px solid "+(testMode==="split"?C.amber:C.border),background:testMode==="split"?"#2a180011":"transparent",color:testMode==="split"?C.amber:C.dim,fontSize:11,cursor:"pointer"}},"自動拆分"),
+          React.createElement('button',{onClick:function(){setTestMode("upload");},style:{flex:1,padding:"6px 0",borderRadius:6,border:"1px solid "+(testMode==="upload"?C.amber:C.border),background:testMode==="upload"?"#2a180011":"transparent",color:testMode==="upload"?C.amber:C.dim,fontSize:11,cursor:"pointer"}},"另外上傳")
+        ),
+        testMode==="split"?React.createElement('div',null,
+          React.createElement('div',{style:{display:"flex",justifyContent:"space-between",fontSize:10,marginBottom:4,color:C.dim}},
+            React.createElement('span',"Train "+splitR+"%"),React.createElement('span',"Test "+(100-splitR)+"%")),
+          React.createElement('input',{type:"range",min:50,max:90,step:5,value:splitR,onChange:function(e){setSplitR(+e.target.value);},style:{width:"100%",accentColor:C.amber}})
+        ):React.createElement(DropZone,{label:"測試資料",file:testFile,onFile:function(f){loadFile(f,false);},accent:C.amber})
+      ),
+
+      // Column selection
+      headers.length>0&&React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16}},
+        React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},"② 欄位設定"),
+        React.createElement('div',{style:{fontSize:11,color:C.dim,marginBottom:6}},"Y 類別標籤"),
+        React.createElement('select',{value:yCol,onChange:function(e){setYCol(e.target.value);},style:{width:"100%",background:"#0a1820",border:"1px solid "+C.cyan+"44",borderRadius:6,padding:"7px 10px",color:C.text,fontSize:12,marginBottom:12,outline:"none"}},
+          headers.map(function(h){return React.createElement('option',{key:h},h);})),
+        React.createElement('div',{style:{fontSize:11,color:C.dim,marginBottom:6}},
+          "X 特徵 ",React.createElement('span',{style:{color:C.amber}},"("+xCols.length+")")),
+        React.createElement('div',{style:{maxHeight:160,overflowY:"auto",display:"flex",flexDirection:"column",gap:3}},
+          headers.filter(function(h){return h!==yCol;}).map(function(h){
+            return React.createElement('label',{key:h,style:{display:"flex",alignItems:"center",gap:7,cursor:"pointer",padding:"3px 7px",borderRadius:5,background:xCols.includes(h)?"#162840":"transparent",border:"1px solid "+(xCols.includes(h)?C.amber+"44":C.border),fontSize:12}},
+              React.createElement('input',{type:"checkbox",checked:xCols.includes(h),onChange:function(){toggleX(h);},style:{accentColor:C.amber}}),
+              React.createElement('span',{style:{color:xCols.includes(h)?C.amber:C.text}},h));
+          }))
+      ),
+
+      // Algorithm
+      headers.length>0&&React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16}},
+        React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},"③ 演算法"),
+        React.createElement('div',{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}},
+          Object.entries(CLS_ALGOS).map(function(entry){
+            const id=entry[0],a=entry[1];
+            return React.createElement('button',{key:id,onClick:function(){setAlgo(id);},
+              style:{display:"flex",flexDirection:"column",gap:2,padding:"9px 10px",borderRadius:8,cursor:"pointer",textAlign:"left",
+                border:"1.5px solid "+(algo===id?a.color:C.border),
+                background:algo===id?a.color+"18":C.card,transition:"all .15s"}},
+              React.createElement('span',{style:{fontSize:14}},a.icon),
+              React.createElement('span',{style:{fontSize:11,fontWeight:700,color:algo===id?a.color:C.text}},a.label),
+              React.createElement('span',{style:{fontSize:9,color:C.dim}},a.desc));
+          }))
+      ),
+
+      // Run button
+      headers.length>0&&xCols.length>0&&React.createElement('button',{onClick:run,disabled:running,
+        style:{padding:"13px",borderRadius:10,border:"none",background:running?"#1a3040":C.cyan,color:"#06101a",fontSize:14,fontWeight:800,cursor:running?"not-allowed":"pointer"}},
+        running?"⚙ 計算中…":"▶ 執行分類分析")
+    ),
+
+    // ── RIGHT PANEL ──
+    React.createElement('div',null,
+      !result&&!running&&React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:60,textAlign:"center",color:C.dim}},
+        React.createElement('div',{style:{fontSize:52,marginBottom:16,opacity:.3}},"🔍"),
+        React.createElement('div',{style:{fontSize:14}},"匯入資料後執行分析，或載入示範資料")),
+
+      result&&React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},
+
+        // Header
+        React.createElement('div',{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},
+          React.createElement('span',{style:{fontSize:22}},CLS_ALGOS[result.algoName]?.icon||"🔍"),
+          React.createElement('span',{style:{fontSize:17,fontWeight:800,color:CLS_ALGOS[result.algoName]?.color||C.cyan}},CLS_ALGOS[result.algoName]?.label||result.algoName),
+          React.createElement('span',{style:{fontSize:10,color:C.dim,fontFamily:"monospace"}},
+            (trainM?.n||0)+" train · "+(testM?.n||0)+" test · "+classes.length+" 類")
+        ),
+
+        // Best comparison
+        bestAll&&React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:14,overflowX:"auto"}},
+          React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},"模型比較"),
+          React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace"}},
+            React.createElement('thead',null,React.createElement('tr',{style:{color:C.dim,borderBottom:"1px solid "+C.border}},
+              React.createElement('th',{style:{textAlign:"left",padding:"4px 8px"}},"模型"),
+              React.createElement('th',{style:{padding:"4px 8px"}},"Train Acc"),
+              React.createElement('th',{style:{padding:"4px 8px"}},"Test Acc"),
+              React.createElement('th',{style:{padding:"4px 8px"}},"F1 Macro"))),
+            React.createElement('tbody',null,
+              bestAll.map(function(r,i){
+                const nm=["lr","dt","rf","knn3","nb"][i]||"lr";
+                return React.createElement('tr',{key:i,style:{background:i===0?"#1a3a0a":"transparent",borderBottom:"1px solid "+C.border+"22"}},
+                  React.createElement('td',{style:{padding:"5px 8px",color:i===0?C.green:C.text}},(i===0?"🏆 ":"")+CLS_ALGOS[nm]?.label),
+                  React.createElement('td',{style:{textAlign:"center",padding:"5px 8px",color:C.cyan}},fmtPct(r.trainM?.accuracy)),
+                  React.createElement('td',{style:{textAlign:"center",padding:"5px 8px",color:C.amber}},fmtPct(r.testM?.accuracy)),
+                  React.createElement('td',{style:{textAlign:"center",padding:"5px 8px"}},fmtPct(r.testM?.macroF1)));
+              })))),
+
+        // Tabs
+        React.createElement('div',{style:{display:"flex",gap:3,borderBottom:"1px solid "+C.border,paddingBottom:6}},
+          [["overview","概覽"],["matrix","混淆矩陣"],["perclass","各類指標"]].map(function(item){
+            var k=item[0],label=item[1];
+            return React.createElement('button',{key:k,onClick:function(){setClsTab(k);},
+              style:{padding:"7px 16px",borderRadius:6,border:"none",cursor:"pointer",background:clsTab===k?"#163048":"transparent",color:clsTab===k?C.cyan:C.dim,fontSize:12,fontWeight:clsTab===k?700:400}},label);
+          })),
+
+        // TAB: OVERVIEW
+        clsTab==="overview"&&React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},
+          React.createElement('div',{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:9}},
+            [["Train Acc",fmtPct(trainM?.accuracy),C.cyan],
+             ["Test Acc",fmtPct(testM?.accuracy),C.amber],
+             ["Train F1",fmtPct(trainM?.macroF1),C.text],
+             ["Test F1",fmtPct(testM?.macroF1),C.text],
+             ["Macro Prec",fmtPct(testM?.macroPrec),C.green],
+             ["Macro Rec",fmtPct(testM?.macroRec),C.purple],
+            ].map(function(item){
+              var label=item[0],value=item[1],color=item[2];
+              return React.createElement('div',{key:label,style:{background:C.card,border:"1px solid "+C.border,borderRadius:8,padding:"10px 14px"}},
+                React.createElement('div',{style:{fontSize:9,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:4}},label),
+                React.createElement('div',{style:{fontSize:17,fontWeight:700,color:color,fontFamily:"monospace"}},value));
+            })),
+          // Class distribution
+          React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:14}},
+            React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},"類別分布（Train）"),
+            React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:5}},
+              classes.map(function(cls,k){
+                const cnt=(trainM?.perClass[k]?.support)||0;
+                const total=trainM?.n||1;
+                const pct=cnt/total;
+                return React.createElement('div',{key:k},
+                  React.createElement('div',{style:{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:2}},
+                    React.createElement('span',{style:{color:C.text}},cls),
+                    React.createElement('span',{style:{fontFamily:"monospace",color:C.amber}},cnt+" ("+fmtPct(pct)+")")),
+                  React.createElement('div',{style:{height:5,background:"#1a2d3a",borderRadius:3,overflow:"hidden"}},
+                    React.createElement('div',{style:{height:"100%",width:(pct*100)+"%",background:C.amber,borderRadius:3}})));
+              })))
+        ),
+
+        // TAB: CONFUSION MATRIX
+        clsTab==="matrix"&&React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16,overflowX:"auto"}},
+          React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},
+            (testM?"測試集":"訓練集")+" 混淆矩陣"),
+          React.createElement('div',{style:{fontSize:10,color:C.dim,marginBottom:10}},"列 = 實際類別，欄 = 預測類別"),
+          React.createElement('table',{style:{borderCollapse:"collapse",fontSize:12,fontFamily:"monospace",marginLeft:8}},
+            React.createElement('thead',null,
+              React.createElement('tr',null,
+                React.createElement('th',{style:{padding:"4px 10px",color:C.dim,textAlign:"center"}},"實 \\ 預"),
+                classes.map(function(c){return React.createElement('th',{key:c,style:{padding:"4px 10px",color:C.cyan,textAlign:"center",minWidth:45}},c);}),
+                React.createElement('th',{style:{padding:"4px 10px",color:C.dim,textAlign:"center"}},"合計"))),
+            React.createElement('tbody',null,
+              classes.map(function(c,i){
+                var cm=(testM||trainM)?.cm;
+                var rowSum=cm?cm[i].reduce(function(s,v){return s+v;},0):0;
+                return React.createElement('tr',{key:c,style:{borderTop:"1px solid "+C.border+"33"}},
+                  React.createElement('td',{style:{padding:"4px 10px",color:C.amber,fontWeight:700}},c),
+                  classes.map(function(_,j){
+                    var v=cm?cm[i][j]:0;
+                    var isDiag=i===j;
+                    var ratio=rowSum>0?v/rowSum:0;
+                    var bg=isDiag?"rgba(80,216,144,"+Math.min(0.6,ratio*0.8)+")" :"rgba(240,100,100,"+Math.min(0.5,ratio*0.8)+")";
+                    return React.createElement('td',{key:j,style:{padding:"4px 10px",textAlign:"center",background:bg,borderRadius:4,color:v>0?(isDiag?C.green:C.red):C.dim,fontWeight:isDiag?700:400}},v);
+                  }),
+                  React.createElement('td',{style:{padding:"4px 10px",textAlign:"center",color:C.dim}},rowSum));
+              })))),
+
+        // TAB: PER CLASS
+        clsTab==="perclass"&&React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16,overflowX:"auto"}},
+          React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},
+            (testM?"測試集":"訓練集")+" 各類別指標"),
+          React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:12}},
+            React.createElement('thead',null,
+              React.createElement('tr',{style:{color:C.dim,borderBottom:"2px solid "+C.border}},
+                React.createElement('th',{style:{textAlign:"left",padding:"8px 12px"}},"類別"),
+                React.createElement('th',{style:{padding:"8px 10px"}},"Precision"),
+                React.createElement('th',{style:{padding:"8px 10px"}},"Recall"),
+                React.createElement('th',{style:{padding:"8px 10px"}},"F1"),
+                React.createElement('th',{style:{padding:"8px 10px"}},"Support"))),
+            React.createElement('tbody',null,
+              classes.map(function(c,k){
+                var pc=(testM||trainM)?.perClass[k];
+                return React.createElement('tr',{key:c,style:{borderBottom:"1px solid "+C.border+"22"}},
+                  React.createElement('td',{style:{padding:"9px 12px",fontWeight:700,color:C.amber}},c),
+                  React.createElement('td',{style:{padding:"9px 10px",textAlign:"center",fontFamily:"monospace",color:C.cyan}},fmtPct(pc?.prec)),
+                  React.createElement('td',{style:{padding:"9px 10px",textAlign:"center",fontFamily:"monospace",color:C.green}},fmtPct(pc?.rec)),
+                  React.createElement('td',{style:{padding:"9px 10px",textAlign:"center",fontFamily:"monospace",color:C.purple}},fmtPct(pc?.f1)),
+                  React.createElement('td',{style:{padding:"9px 10px",textAlign:"center",fontFamily:"monospace",color:C.dim}},pc?.support));
+              }),
+              React.createElement('tr',{style:{borderTop:"2px solid "+C.border,background:"#0a1820"}},
+                React.createElement('td',{style:{padding:"9px 12px",fontWeight:700,color:C.text}},"Macro Avg"),
+                React.createElement('td',{style:{padding:"9px 10px",textAlign:"center",fontFamily:"monospace",color:C.cyan,fontWeight:700}},fmtPct((testM||trainM)?.macroPrec)),
+                React.createElement('td',{style:{padding:"9px 10px",textAlign:"center",fontFamily:"monospace",color:C.green,fontWeight:700}},fmtPct((testM||trainM)?.macroRec)),
+                React.createElement('td',{style:{padding:"9px 10px",textAlign:"center",fontFamily:"monospace",color:C.purple,fontWeight:700}},fmtPct((testM||trainM)?.macroF1)),
+                React.createElement('td',{style:{padding:"9px 10px",textAlign:"center",fontFamily:"monospace",color:C.dim}},(testM||trainM)?.n))))
+    )
+  )
+  )
+  );
+}
+
 // ════════════════════════ MAIN APP ════════════════════════
 function App(){
   const[trainFile,setTrainFile]=useState(null);
@@ -1405,7 +1903,7 @@ function App(){
     document.head.appendChild(link);
   },[]);
   return(
-    React.createElement(React.Fragment,null,React.createElement('div',{style:{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"Syne,sans-serif",padding:"24px 20px",boxSizing:"border-box"}},React.createElement('div',{style:{marginBottom:24,display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}},React.createElement('h1',{style:{margin:0,fontSize:24,fontWeight:800,color:"#e8f4ff",letterSpacing:-0.5}},'迴歸分析引擎'),React.createElement('span',{style:{fontSize:10,letterSpacing:2,color:C.cyan,textTransform:"uppercase",fontFamily:"monospace"}},'REGRESSION LAB v2'),React.createElement('div',{style:{display:"flex",gap:0,borderRadius:8,border:"1px solid "+(C.border),overflow:"hidden",marginLeft:8}},([["analysis","📊 建模分析"],["predict","🎯 模型預測"],["doe","🔬 DOE 撒點"],["adjr2","📐 Adj R²"]].map((item)=>{const m=item[0],l=item[1];return(
+    React.createElement(React.Fragment,null,React.createElement('div',{style:{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"Syne,sans-serif",padding:"24px 20px",boxSizing:"border-box"}},React.createElement('div',{style:{marginBottom:24,display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}},React.createElement('h1',{style:{margin:0,fontSize:24,fontWeight:800,color:"#e8f4ff",letterSpacing:-0.5}},'迴歸分析引擎'),React.createElement('span',{style:{fontSize:10,letterSpacing:2,color:C.cyan,textTransform:"uppercase",fontFamily:"monospace"}},'REGRESSION LAB v2'),React.createElement('div',{style:{display:"flex",gap:0,borderRadius:8,border:"1px solid "+(C.border),overflow:"hidden",marginLeft:8}},([["analysis","📊 迴歸分析"],["classification","🔍 分類分析"],["predict","🎯 模型預測"],["doe","🔬 DOE 撒點"],["adjr2","📐 Adj R²"]].map((item)=>{const m=item[0],l=item[1];return(
               React.createElement('button',{key:m,onClick:()=>setMode(m),style:{padding:"7px 18px",border:"none",cursor:"pointer",fontSize:12,fontWeight:mode===m?700:400,
                 background:mode===m?C.cyan:"transparent",color:mode===m?"#06101a":C.dim,transition:"all .15s"}},(l))
             );}))),React.createElement('div',{style:{marginLeft:"auto",display:"flex",gap:8}},(mode==="analysis"&&demoLoaded&&React.createElement('button',{onClick:()=>dlXLSX(trainRows,"demo_turbine_data.xlsx"),style:{padding:"7px 14px",borderRadius:7,border:"1px solid "+(C.border),background:"transparent",color:C.dim,fontSize:11,cursor:"pointer"}},'⬇ 下載範例 Excel')),(mode==="analysis"&&result&&React.createElement('button',{onClick:downloadEmulator,style:{padding:"7px 16px",borderRadius:7,border:"1.5px solid "+(C.amber),background:C.amber+"18",color:C.amber,fontSize:12,fontWeight:700,cursor:"pointer"}},'⬇ 下載 Emulator .pkl')))),(mode==="analysis"&&(
@@ -1537,6 +2035,8 @@ function App(){
                     )))
                 )))
             ))))
+        )),(mode==="classification"&&(
+          React.createElement(ClassificationPage,null)
         )),(mode==="predict"&&(
           React.createElement('div',{style:{display:"grid",gridTemplateColumns:"320px 1fr",gap:18,alignItems:"start"}},React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:18}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},'匯入 Emulator PKL'),React.createElement(DropZone,{label:'拖曳 .pkl 檔案至此',file:pklFile,onFile:onPklFile,accent:C.purple}),(pklError&&React.createElement('div',{style:{marginTop:10,fontSize:11,color:C.red,background:"#1a0808",border:"1px solid "+C.red+"33",borderRadius:6,padding:"8px 12px"}},'❌',(pklError)))),(pklModel&&(
                 React.createElement('div',{style:{background:C.card,border:"1px solid "+C.purple+"44",borderRadius:12,padding:18}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:14}},'模型資訊'),React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:9}},([
