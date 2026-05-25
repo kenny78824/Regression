@@ -186,6 +186,41 @@ function predGPR(gpr,Xs){
   });
 }
 
+// ── Gradient Boosted Trees (XGBoost-style) ──
+function buildXGB(X,y,nTrees,lr,maxD,lam){
+  // Normalise labels
+  const yMean=avg(y);
+  let preds=new Array(X.length).fill(yMean);
+  const trees=[];
+  for(let t=0;t<nTrees;t++){
+    // Residuals = negative gradient of MSE = y - pred
+    const resid=y.map((yi,i)=>yi-preds[i]);
+    // Fit regression tree on residuals
+    const tree=buildDT(X,resid,0,maxD,3);
+    trees.push(tree);
+    // Update predictions with shrinkage + L2 leaf dampening
+    preds=preds.map((p,i)=>p+lr*predDT(tree,X[i]));
+  }
+  return{trees,lr,yMean};
+}
+function predXGB(model,Xs){
+  return Xs.map(x=>{
+    let p=model.yMean;
+    model.trees.forEach(t=>{p+=model.lr*predDT(t,x);});
+    return p;
+  });
+}
+function xgbImp(model,p,totalN){
+  const imp=new Array(p).fill(0);
+  model.trees.forEach(t=>{
+    const ti=dtImp(t,p,totalN);
+    ti.forEach((v,j)=>{imp[j]+=v;});
+  });
+  const s=imp.reduce((a,v)=>a+v,0)||1;
+  return imp.map(v=>v/s);
+}
+
+
 // ════════════════════════ ALGORITHM REGISTRY ════════════════════════
 const ALGOS={
   linear:    {label:"OLS Linear",    icon:"📏",color:"#40c8f0",desc:"最小二乘線性迴歸"},
@@ -197,6 +232,7 @@ const ALGOS={
   gpr:       {label:"Gaussian Process",icon:"🔮",color:"#80d0ff",desc:"高斯過程，含不確定性 (n≤250)"},
   dt:        {label:"Decision Tree", icon:"🌲",color:"#60d090",desc:"CART 決策樹"},
   rf:        {label:"Random Forest", icon:"🌳",color:"#80f060",desc:"隨機森林集成"},
+  xgb:       {label:"XGBoost",       icon:"⚡",color:"#ff9040",desc:"梯度提升樹，100棵/lr=0.1"},
   best:      {label:"⭐ 最佳演算法", icon:"⭐",color:"#ffe040",desc:"自動比較所有模型"},
 };
 
@@ -272,6 +308,13 @@ function runAlgo(name,Xtrain,ytrain,Xtest,ytest,fNames){
       const s=avgI.reduce((a,v)=>a+v,0)||1;
       importance=fNames.map((fn,j)=>({name:fn,value:avgI[j]/s}));
       modelInfo={nTrees:20,trees};
+    } else if(name==="xgb"){
+      const xgbModel=buildXGB(Xtrain,ytrain,100,0.1,4,1.0);
+      tP=predXGB(xgbModel,Xtrain);
+      tsP=Xtest?.length?predXGB(xgbModel,Xtest):[];
+      const xi=xgbImp(xgbModel,p,Xtrain.length);
+      importance=fNames.map((fn,j)=>({name:fn,value:xi[j]}));
+      modelInfo={nTrees:100,lr:0.1,maxDepth:4,lambda:1.0};
     }
     return{name,trainM:mets(ytrain,tP,p),testM:ytest?.length?mets(ytest,tsP,p):null,
       trainPred:tP,testPred:tsP,importance,modelInfo,extraStore,
@@ -1698,52 +1741,60 @@ function App(){
         let Xtr,ytr,Xts=[],yts=[];
         if(testMode==="loocv"){
           const n=cX.length;
-          if(n<4){throw new Error('LOOCV 需要至少 4 筆有效資料');}
-          // Resolve "best" algo: do a quick split to find the winner first
-          let loocvAlgo=algo;
-          if(algo==="best"){
-            const si=Math.floor(n*0.8);
-            const qNames=["linear","poly2","ridge","lasso","dt","rf"];
-            const qAll=qNames.map(nm=>runAlgo(nm,cX.slice(0,si),cY.slice(0,si),cX.slice(si),cY.slice(si),xCols)).filter(Boolean);
-            if(qAll.length){
-              qAll.sort((a,b)=>((b.testM??b.trainM)?.r2??-Infinity)-((a.testM??a.trainM)?.r2??-Infinity));
-              loocvAlgo=qAll[0].name;
-            } else {
-              loocvAlgo="linear";
+          if(n<4){throw new Error('LOOCV 需要至少4筆有效資料');}
+          // Helper: run LOOCV for one algorithm
+          const runLoocvOne=(algoName)=>{
+            const capN=algoName==="gpr"?Math.min(n,80):Math.min(n,500);
+            const isSubset=capN<n;
+            const idxArr=isSubset?Array.from({length:n},(_,i)=>i).sort(()=>Math.random()-0.5).slice(0,capN):Array.from({length:n},(_,i)=>i);
+            const preds=[];
+            for(let k=0;k<idxArr.length;k++){
+              const i=idxArr[k];
+              try{
+                const r=runAlgo(algoName,cX.filter((_,j)=>j!==i),cY.filter((_,j)=>j!==i),[cX[i]],[cY[i]],xCols);
+                const pred=r?.testPred?.[0];
+                if(typeof pred==="number"&&isFinite(pred)) preds.push({actual:cY[i],pred});
+              }catch(_e){}
             }
+            if(preds.length<4) return null;
+            const ya2=preds.map(p=>p.actual),yp2=preds.map(p=>p.pred);
+            const yMean2=avg(ya2);
+            const ssR=ya2.reduce((s,v,i)=>s+(v-yp2[i])**2,0);
+            const ssT=ya2.reduce((s,v)=>s+(v-yMean2)**2,0);
+            const r2v=ssT>0?1-ssR/ssT:1;
+            const fullR2=runAlgo(algoName,cX,cY,[],[],xCols);
+            return{name:algoName,preds,
+              testM:{r2:r2v,adjR2:r2v,
+                mae:ya2.reduce((s,v,i)=>s+Math.abs(v-yp2[i]),0)/preds.length,
+                mse:ssR/preds.length,rmse:Math.sqrt(ssR/preds.length),
+                mape:ya2.reduce((s,v,i)=>v?s+Math.abs((v-yp2[i])/v):s,0)/preds.length*100,
+                maxE:ya2.reduce((m,v,i)=>Math.abs(v-yp2[i])>m?Math.abs(v-yp2[i]):m,0),medE:0,n:preds.length},
+              trainM:fullR2?.trainM};
+          };
+          if(algo==="best"){
+            // Run LOOCV for ALL algorithms, compare LOOCV R²
+            const allNames=["linear","poly2","poly3","ridge","lasso","elasticnet","dt","rf","xgb"];
+            const allRes=allNames.map(nm=>runLoocvOne(nm)).filter(Boolean);
+            if(!allRes.length){throw new Error('所有演算法 LOOCV 均失敗');}
+            allRes.sort((a,b)=>((b.testM?.r2)??-Infinity)-((a.testM?.r2)??-Infinity));
+            const bestRes=allRes[0];
+            const loocvAlgo2=bestRes.name;
+            const label2="LOOCV (best→"+loocvAlgo2+", "+bestRes.preds.length+" folds)";
+            const fullR2=runAlgo(loocvAlgo2,cX,cY,[],[],xCols);
+            setResult({...fullR2,testM:bestRes.testM,
+              testPairs:bestRes.preds.map(p=>({actual:p.actual,pred:p.pred,res:p.actual-p.pred})),
+              splitLabel:label2});
+            setBestAll(allRes);setTab("overview");
+            setRunning(false);setSplitMethodUsed(label2);setSplitQuality(null);
+            return;
           }
-          const maxN=loocvAlgo==="gpr"?Math.min(n,80):Math.min(n,500);
-          const subset=maxN<n;
-          const sIdx=subset?Array.from({length:n},(_,i)=>i).sort(()=>Math.random()-0.5).slice(0,maxN):Array.from({length:n},(_,i)=>i);
-          const looPreds=[];
-          for(let k=0;k<sIdx.length;k++){
-            const i=sIdx[k];
-            const Xk=cX.filter((_,j)=>j!==i);
-            const yk=cY.filter((_,j)=>j!==i);
-            try{
-              const r=runAlgo(loocvAlgo,Xk,yk,[cX[i]],[cY[i]],xCols);
-              const pred=r?.testPred?.[0];
-              if(typeof pred==="number"&&isFinite(pred)){
-                looPreds.push({actual:cY[i],pred});
-              }
-            }catch(_e){}
-          }
-          if(looPreds.length<4){throw new Error('LOOCV 有效預測不足，請換演算法或增加資料');}
-          const ya=looPreds.map(p=>p.actual),yp=looPreds.map(p=>p.pred);
-          const yMean=avg(ya);
-          const ssRes=ya.reduce((s,v,i)=>s+(v-yp[i])**2,0);
-          const ssTot=ya.reduce((s,v)=>s+(v-yMean)**2,0);
-          const looR2=ssTot>0?1-ssRes/ssTot:1;
-          const looMae=ya.reduce((s,v,i)=>s+Math.abs(v-yp[i]),0)/looPreds.length;
-          const looRmse=Math.sqrt(ssRes/looPreds.length);
-          const looMape=ya.reduce((s,v,i)=>v?s+Math.abs((v-yp[i])/v):s,0)/looPreds.length*100;
-          // Full model on all data for coefficients/importance
-          const fullR=runAlgo(loocvAlgo,cX,cY,[],[],xCols);
-          const looMetrics={r2:looR2,adjR2:looR2,mae:looMae,mse:ssRes/looPreds.length,rmse:looRmse,mape:looMape,
-            maxE:ya.reduce((m,v,i)=>Math.abs(v-yp[i])>m?Math.abs(v-yp[i]):m,0),medE:0,n:looPreds.length};
-          const label="LOOCV"+(algo==="best"?"(best→"+loocvAlgo+")":"")+(subset?" (sampled "+maxN+"/"+n+")":"");
-          setResult({...fullR,testM:looMetrics,
-            testPairs:looPreds.map(p=>({actual:p.actual,pred:p.pred,res:p.actual-p.pred})),
+          // Single algo LOOCV
+          const singleRes=runLoocvOne(algo);
+          if(!singleRes){throw new Error('LOOCV 有效預測不足，請換演算法或增加資料');}
+          const label="LOOCV ("+algo+", "+singleRes.preds.length+" folds)";
+          const fullR=runAlgo(algo,cX,cY,[],[],xCols);
+          setResult({...fullR,testM:singleRes.testM,
+            testPairs:singleRes.preds.map(p=>({actual:p.actual,pred:p.pred,res:p.actual-p.pred})),
             splitLabel:label});
           setBestAll(null);setTab("overview");
           setRunning(false);setSplitMethodUsed(label);setSplitQuality(null);
@@ -1781,7 +1832,7 @@ function App(){
           setSplitQuality(null);
         }
         if(algo==="best"){
-          const names=["linear","poly2","poly3","ridge","lasso","elasticnet","gpr","dt","rf"];
+          const names=["linear","poly2","poly3","ridge","lasso","elasticnet","gpr","dt","rf","xgb"];
           const all=names.map(n=>{
             if(n==="gpr"&&Xtr.length>250)return null; // skip GPR for large data in best mode
             return runAlgo(n,Xtr,ytr,Xts,yts,xCols);
@@ -2032,7 +2083,7 @@ function App(){
             )),(result&&(
               React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},React.createElement('span',{style:{fontSize:22}},(ALGOS[result.name]?.icon)),React.createElement('span',{style:{fontSize:17,fontWeight:800,color:ALGOS[result.name]?.color}},(ALGOS[result.name]?.label)),(algo==="best"&&React.createElement('span',{style:{fontSize:10,background:"#ffe04022",color:C.yellow,border:"1px solid "+C.yellow+"44",borderRadius:4,padding:"2px 8px",letterSpacing:1}},'AUTO-SELECTED')),React.createElement('span',{style:{fontSize:10,color:C.dim,fontFamily:"monospace"}},(result.splitLabel?"LOOCV ("+result.testM?.n+" folds)":result.trainM?.n+" train · "+(result.testM?.n??0)+" test")),React.createElement('button',{onClick:downloadEmulator,style:{marginLeft:"auto",padding:"6px 14px",borderRadius:6,border:"1px solid "+C.amber+"44",
                     background:C.amber+"11",color:C.amber,fontSize:11,cursor:"pointer"}},'⬇ .pkl')),(bestAll&&(
-                  React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:14,overflowX:"auto"}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'模型比較'),React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace"}},React.createElement('thead',null,React.createElement('tr',{style:{color:C.dim,borderBottom:"1px solid "+(C.border)}},React.createElement('th',{style:{textAlign:"left",padding:"4px 8px"}},'模型'),React.createElement('th',{style:{padding:"4px 8px"}},'Train R²'),React.createElement('th',{style:{padding:"4px 8px"}},'Test R²'),React.createElement('th',{style:{padding:"4px 8px"}},'RMSE(test)'),React.createElement('th',{style:{padding:"4px 8px"}},'MAE(test)'))),React.createElement('tbody',null,(bestAll.map((r,i)=>(
+                  React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:14,overflowX:"auto"}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:4}},'模型比較'),(result.splitLabel&&React.createElement('div',{style:{fontSize:10,color:C.amber,marginBottom:8}},("⚡ 快速預篩（80/20 split），最佳演算法再以 LOOCV 驗證"))),React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace"}},React.createElement('thead',null,React.createElement('tr',{style:{color:C.dim,borderBottom:"1px solid "+(C.border)}},React.createElement('th',{style:{textAlign:"left",padding:"4px 8px"}},'模型'),React.createElement('th',{style:{padding:"4px 8px"}},'Train R²'),React.createElement('th',{style:{padding:"4px 8px"}},'Test R²'),React.createElement('th',{style:{padding:"4px 8px"}},'RMSE(test)'),React.createElement('th',{style:{padding:"4px 8px"}},'MAE(test)'))),React.createElement('tbody',null,(bestAll.map((r,i)=>(
                         React.createElement('tr',{key:r.name,style:{background:i===0?"#1a3a0a":"transparent",borderBottom:"1px solid "+C.border+"22"}},React.createElement('td',{style:{padding:"5px 8px",color:i===0?C.green:C.text}},(i===0?"🏆 ":""),(ALGOS[r.name]?.label)),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px",color:C.cyan}},(fmt(r.trainM?.r2))),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px",color:C.amber}},(r.testM?fmt(r.testM.r2):"—")),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px"}},(r.testM?fmt(r.testM.rmse):"—")),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px"}},(fmt((r.testM??r.trainM)?.mae))))
                       ))))))
                 )),React.createElement('div',{style:{display:"flex",gap:3,borderBottom:"1px solid "+(C.border),paddingBottom:6}},([["overview","概覽"],["metrics","指標"],["predictions","預測圖"],["sensitivity","敏感度"]].map(([k,l])=>(
