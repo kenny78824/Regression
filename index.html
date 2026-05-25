@@ -4,52 +4,6 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>迴歸分析引擎</title>
-  <style>
-    *{box-sizing:border-box;margin:0;padding:0;}
-    body{background:#06101a;color:#c8d8e8;font-family:'Syne',sans-serif;}
-    input[type=range]{cursor:pointer;}
-    ::-webkit-scrollbar{width:6px;height:6px;}
-    ::-webkit-scrollbar-track{background:#0c1e2e;}
-    ::-webkit-scrollbar-thumb{background:#1a3448;border-radius:3px;}
-    ::-webkit-scrollbar-thumb:hover{background:#2a4458;}
-    select option{background:#0c1e2e;}
-    #splash{display:flex;flex-direction:column;align-items:center;justify-content:center;
-      height:100vh;gap:16px;color:#4a6878;font-family:monospace;font-size:13px;letter-spacing:2px;}
-    #splash-dot{width:36px;height:36px;border:3px solid #1a3448;border-top-color:#40c8f0;
-      border-radius:50%;animation:sp 0.8s linear infinite;}
-    @keyframes sp{to{transform:rotate(360deg);}}
-    #err{display:none;color:#ffa0a0;padding:32px;font-family:monospace;
-      background:#06101a;min-height:100vh;}
-    #err h2{color:#f06464;margin-bottom:12px;font-size:18px;}
-    #err pre{font-size:11px;white-space:pre-wrap;line-height:1.5;}
-  </style>
-</head>
-<body>
-  <div id="root">
-    <div id="splash">
-      <div id="splash-dot"></div>
-      <div>REGRESSION LAB 載入中…</div>
-    </div>
-  </div>
-  <div id="err"><h2>Error</h2><pre id="err-msg"></pre></div>
-
-  <script>
-  function showErr(msg) {
-    document.getElementById('root').style.display = 'none';
-    var el = document.getElementById('err');
-    el.style.display = 'block';
-    document.getElementById('err-msg').textContent = msg;
-  }
-  window.onerror = function(msg, src, line, col, err) {
-    showErr((err && err.stack) ? err.stack : (msg + ' (' + src + ':' + line + ')'));
-    return true;
-  };
-  window.addEventListener('unhandledrejection', function(ev) {
-    showErr('Unhandled promise: ' + (ev.reason && ev.reason.stack ? ev.reason.stack : ev.reason));
-  });
-  </script>
-
-  <!-- CDN libraries (loaded synchronously before app script) -->
   <!-- React -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" crossorigin="anonymous"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
@@ -81,8 +35,29 @@
   })();
   </script>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
-
-  <!-- App (runs after CDN scripts above have loaded) -->
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{background:#06101a;color:#c8d8e8;font-family:'Syne',sans-serif;}
+    input[type=range]{cursor:pointer;}
+    ::-webkit-scrollbar{width:6px;height:6px;}
+    ::-webkit-scrollbar-track{background:#0c1e2e;}
+    ::-webkit-scrollbar-thumb{background:#1a3448;border-radius:3px;}
+    ::-webkit-scrollbar-thumb:hover{background:#2a4458;}
+    select option{background:#0c1e2e;}
+    #splash{display:flex;flex-direction:column;align-items:center;justify-content:center;
+      height:100vh;gap:16px;color:#4a6878;font-family:monospace;font-size:13px;letter-spacing:2px;}
+    #splash-dot{width:36px;height:36px;border:3px solid #1a3448;border-top-color:#40c8f0;
+      border-radius:50%;animation:sp 0.8s linear infinite;}
+    @keyframes sp{to{transform:rotate(360deg);}}
+    #err{display:none;color:#ffa0a0;padding:32px;font-family:monospace;
+      background:#06101a;min-height:100vh;}
+    #err h2{color:#f06464;margin-bottom:12px;font-size:18px;}
+    #err pre{font-size:11px;white-space:pre-wrap;line-height:1.5;}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
   <script>
 function initApp() {
 const { useState, useCallback, useRef, useMemo } = React;
@@ -95,7 +70,7 @@ const {
 // ════════════════════════ MATH UTILS ════════════════════════
 const mMul  = (A,B)=>math.multiply(math.matrix(A),math.matrix(B)).toArray();
 const mTrans= A=>math.transpose(math.matrix(A)).toArray();
-const mInv  = A=>{ try{return math.inv(math.matrix(A)).toArray();}catch(_e){return null;} };
+const mInv  = A=>{ try{return math.inv(math.matrix(A)).toArray();}catch{return null;} };
 const flat  = A=>A.map(r=>Array.isArray(r)?r[0]:r);
 const addB  = X=>X.map(r=>[1,...r]);
 const avg   = a=>a.length?a.reduce((s,v)=>s+v,0)/a.length:0;
@@ -139,8 +114,8 @@ function polyExp(X,deg){
 }
 function polyN(ns,deg){
   const f=[...ns];
-  if(deg>=2){ns.forEach(n=>f.push(`${n}²`));for(let i=0;i<ns.length;i++)for(let j=i+1;j<ns.length;j++)f.push(`${ns[i]}×${ns[j]}`);}
-  if(deg>=3)ns.forEach(n=>f.push(`${n}³`));
+  if(deg>=2){ns.forEach(n=>f.push(n+"²"));for(let i=0;i<ns.length;i++)for(let j=i+1;j<ns.length;j++)f.push((ns[i])+"×"+(ns[j]));}
+  if(deg>=3)ns.forEach(n=>f.push(n+"³"));
   return f;
 }
 
@@ -816,7 +791,7 @@ function runPklPrediction(model,featureValues){
   }
   if(algo==='dt')return goTree(p.tree,x);
   if(algo==='rf'){const preds=p.trees.map(t=>goTree(t,x));return preds.reduce((s,v)=>s+v,0)/preds.length;}
-  throw new Error(`不支援的演算法: ${algo}`);
+  throw new Error('不支援的演算法: '+(algo));
 }
 
 
@@ -836,8 +811,8 @@ function buildEmulatorDict(result,xCols,yCol){
     keys = ${kr}
     coefficients = np.array(${JSON.stringify(co)})
     intercept = ${ic}
-    means = ${means?JSON.stringify(means):'None'}
-    stds  = ${stds ?JSON.stringify(stds) :'None'}
+    means = ${means?JSON.stringify(means):"None"}
+    stds  = ${stds?JSON.stringify(stds):"None"}
     x = np.array([float(features[k]) for k in keys])
     if means is not None:
         x = (x - np.array(means)) / np.array(stds)
@@ -939,7 +914,7 @@ const C={bg:"#06101a",card:"#0c1e2e",card2:"#0f2538",border:"#1a3448",
   text:"#c8d8e8",dim:"#4a6878",amber:"#f0a040",cyan:"#40c8f0",
   green:"#50d890",red:"#f06464",purple:"#c080f0",yellow:"#ffe040"};
 const fmt=(v,d=4)=>v==null?"—":typeof v==="number"?(Math.abs(v)<0.001&&v!==0?v.toExponential(2):v.toFixed(d)):String(v);
-const fmtP=v=>v==null?"—":`${v>=0?"+":""}${v.toFixed(1)}%`;
+const fmtP=v=>v==null?"—":(v>=0?"+":"")+v.toFixed(1)+"%";
 
 const parseFile=(file,cb)=>{
   const r=new FileReader();
@@ -951,14 +926,14 @@ const parseFile=(file,cb)=>{
 function DropZone({label,file,onFile,accent="#40c8f0"}){
   const[over,setOver]=useState(false);const ref=useRef();
   return(
-    React.createElement('div',{onClick:()=>ref.current.click(),onDragOver:e=>{e.preventDefault();setOver(true);},onDragLeave:()=>setOver(false),onDrop:e=>{e.preventDefault();setOver(false);const f=e.dataTransfer.files[0];if(f)onFile(f);},style:{border:`2px dashed ${over?accent:C.border}`,borderRadius:10,padding:"18px 14px",textAlign:"center",
+    React.createElement('div',{onClick:()=>ref.current.click(),onDragOver:e=>{e.preventDefault();setOver(true);},onDragLeave:()=>setOver(false),onDrop:e=>{e.preventDefault();setOver(false);const f=e.dataTransfer.files[0];if(f)onFile(f);},style:{border:"2px dashed "+(over?accent:C.border),borderRadius:10,padding:"18px 14px",textAlign:"center",
         cursor:"pointer",background:over?"#0f2538":C.card,transition:"all .2s",userSelect:"none"}},React.createElement('div',{style:{fontSize:26,marginBottom:6}},'📂'),React.createElement('div',{style:{fontSize:12,color:C.dim}},(label)),(file&&React.createElement('div',{style:{marginTop:6,fontSize:10,fontFamily:"monospace",color:accent,background:"#0a1820",display:"inline-block",padding:"2px 8px",borderRadius:4}},'📎',(file.name))),React.createElement('input',{ref:ref,type:'file',accept:'.xlsx,.xls,.csv',style:{display:"none"},onChange:e=>e.target.files[0]&&onFile(e.target.files[0])}))
   );
 }
 
 function MC({label,value,color=C.text,unit=""}){
   return(
-    React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px"}},React.createElement('div',{style:{fontSize:9,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:4}},(label)),React.createElement('div',{style:{fontSize:17,fontWeight:700,color,fontFamily:"monospace"}},(value),(unit)))
+    React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:8,padding:"10px 14px"}},React.createElement('div',{style:{fontSize:9,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:4}},(label)),React.createElement('div',{style:{fontSize:17,fontWeight:700,color,fontFamily:"monospace"}},(value),(unit)))
   );
 }
 
@@ -973,8 +948,8 @@ function AlgoCard({id,active,onClick}){
   const a=ALGOS[id];
   return(
     React.createElement('button',{onClick:()=>onClick(id),style:{display:"flex",flexDirection:"column",gap:2,padding:"9px 10px",borderRadius:8,
-      border:`1.5px solid ${active?a.color:C.border}`,cursor:"pointer",textAlign:"left",
-      background:active?`${a.color}18`:C.card,transition:"all .15s"}},React.createElement('span',{style:{fontSize:14}},(a.icon)),React.createElement('span',{style:{fontSize:11,fontWeight:700,color:active?a.color:C.text}},(a.label)),React.createElement('span',{style:{fontSize:9,color:C.dim,lineHeight:1.3}},(a.desc)))
+      border:"1.5px solid "+(active?a.color:C.border),cursor:"pointer",textAlign:"left",
+      background:active?a.color+"18":C.card,transition:"all .15s"}},React.createElement('span',{style:{fontSize:14}},(a.icon)),React.createElement('span',{style:{fontSize:11,fontWeight:700,color:active?a.color:C.text}},(a.label)),React.createElement('span',{style:{fontSize:9,color:C.dim,lineHeight:1.3}},(a.desc)))
   );
 }
 
@@ -982,7 +957,7 @@ function TT({active,payload}){
   if(!active||!payload?.length)return null;
   const d=payload[0]?.payload;
   return(
-    React.createElement('div',{style:{background:"#0a1e2c",border:`1px solid ${C.border}`,borderRadius:6,padding:"7px 11px",fontFamily:"monospace",fontSize:11}},(d?.actual!=null&&React.createElement('div',{style:{color:C.amber}},'Actual:',(fmt(d.actual,3)))),(d?.pred!=null&&React.createElement('div',{style:{color:C.cyan}},'Pred:',(fmt(d.pred,3)))),(d?.res!=null&&React.createElement('div',{style:{color:C.dim}},'Res:',(fmt(d.res,3)))))
+    React.createElement('div',{style:{background:"#0a1e2c",border:"1px solid "+(C.border),borderRadius:6,padding:"7px 11px",fontFamily:"monospace",fontSize:11}},(d?.actual!=null&&React.createElement('div',{style:{color:C.amber}},'Actual:',(fmt(d.actual,3)))),(d?.pred!=null&&React.createElement('div',{style:{color:C.cyan}},'Pred:',(fmt(d.pred,3)))),(d?.res!=null&&React.createElement('div',{style:{color:C.dim}},'Res:',(fmt(d.res,3)))))
   );
 }
 
@@ -1006,7 +981,7 @@ const NEEDS_ALP =['ccd'];
 function DoePage({factors,setFactors,method,setMethod,n,setN,center,setCenter,
                   levels,setLevels,alpha,setAlpha,table,setTable,err,setErr}){
 
-  const addFactor=()=>setFactors(p=>[...p,{name:`X${p.length+1}`,lo:0,hi:1}]);
+  const addFactor=()=>setFactors(p=>[...p,{name:'X'+(p.length+1),lo:0,hi:1}]);
   const rmFactor=i=>setFactors(p=>p.filter((_,j)=>j!==i));
   const setF=(i,k,v)=>setFactors(p=>p.map((f,j)=>j===i?{...f,[k]:v}:f));
 
@@ -1023,38 +998,38 @@ function DoePage({factors,setFactors,method,setMethod,n,setN,center,setCenter,
 
   const download=()=>{
     if(!table)return;
-    dlXLSX(table.rows,`DOE_${table.method.replace(/ /g,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`);
+    dlXLSX(table.rows,"DOE_"+table.method.replace(/ /g,"_")+"_"+new Date().toISOString().slice(0,10)+".xlsx");
   };
 
   const activeMeta=DOE_METHODS.find(m=>m.id===method)||DOE_METHODS[0];
 
   return(
-    React.createElement('div',{style:{display:"grid",gridTemplateColumns:"300px 1fr",gap:18,alignItems:"start"}},React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16}},React.createElement('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase"}},'① 因子設定'),React.createElement('button',{onClick:addFactor,style:{padding:"4px 10px",borderRadius:5,border:`1px solid ${C.cyan}`,background:`${C.cyan}18`,color:C.cyan,fontSize:11,cursor:"pointer"}},'+ 新增')),React.createElement('div',{style:{display:"grid",gridTemplateColumns:"auto 46px 46px 26px",gap:4,marginBottom:6}},(['名稱','下限','上限',''].map(h=>React.createElement('div',{key:h,style:{fontSize:9,color:C.dim,textAlign:"center"}},(h))))),React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:5}},(factors.map((f,i)=>(
-              React.createElement('div',{key:i,style:{display:"grid",gridTemplateColumns:"1fr 46px 46px 26px",gap:4,alignItems:"center"}},React.createElement('input',{value:f.name,onChange:e=>setF(i,'name',e.target.value),style:{background:"#0a1820",border:`1px solid ${C.border}`,borderRadius:5,padding:"5px 7px",color:C.text,fontSize:12,outline:"none"}}),React.createElement('input',{type:'number',value:f.lo,onChange:e=>setF(i,'lo',parseFloat(e.target.value)),style:{background:"#0a1820",border:`1px solid ${C.red}44`,borderRadius:5,padding:"5px 4px",color:C.text,fontSize:11,outline:"none",textAlign:"center"}}),React.createElement('input',{type:'number',value:f.hi,onChange:e=>setF(i,'hi',parseFloat(e.target.value)),style:{background:"#0a1820",border:`1px solid ${C.green}44`,borderRadius:5,padding:"5px 4px",color:C.text,fontSize:11,outline:"none",textAlign:"center"}}),React.createElement('button',{onClick:()=>rmFactor(i),style:{padding:"3px",borderRadius:4,border:`1px solid ${C.border}`,background:"transparent",color:C.red,fontSize:12,cursor:"pointer",lineHeight:1}},'✕'))
-            ))))),React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'② DOE 方法'),React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:5}},(DOE_METHODS.map(m=>(
+    React.createElement('div',{style:{display:"grid",gridTemplateColumns:"300px 1fr",gap:18,alignItems:"start"}},React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:16}},React.createElement('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase"}},'① 因子設定'),React.createElement('button',{onClick:addFactor,style:{padding:"4px 10px",borderRadius:5,border:"1px solid "+(C.cyan),background:C.cyan+"18",color:C.cyan,fontSize:11,cursor:"pointer"}},'+ 新增')),React.createElement('div',{style:{display:"grid",gridTemplateColumns:"auto 46px 46px 26px",gap:4,marginBottom:6}},(['名稱','下限','上限',''].map(h=>React.createElement('div',{key:h,style:{fontSize:9,color:C.dim,textAlign:"center"}},(h))))),React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:5}},(factors.map((f,i)=>(
+              React.createElement('div',{key:i,style:{display:"grid",gridTemplateColumns:"1fr 46px 46px 26px",gap:4,alignItems:"center"}},React.createElement('input',{value:f.name,onChange:e=>setF(i,'name',e.target.value),style:{background:"#0a1820",border:"1px solid "+(C.border),borderRadius:5,padding:"5px 7px",color:C.text,fontSize:12,outline:"none"}}),React.createElement('input',{type:'number',value:f.lo,onChange:e=>setF(i,'lo',parseFloat(e.target.value)),style:{background:"#0a1820",border:"1px solid "+C.red+"44",borderRadius:5,padding:"5px 4px",color:C.text,fontSize:11,outline:"none",textAlign:"center"}}),React.createElement('input',{type:'number',value:f.hi,onChange:e=>setF(i,'hi',parseFloat(e.target.value)),style:{background:"#0a1820",border:"1px solid "+C.green+"44",borderRadius:5,padding:"5px 4px",color:C.text,fontSize:11,outline:"none",textAlign:"center"}}),React.createElement('button',{onClick:()=>rmFactor(i),style:{padding:"3px",borderRadius:4,border:"1px solid "+(C.border),background:"transparent",color:C.red,fontSize:12,cursor:"pointer",lineHeight:1}},'✕'))
+            ))))),React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:16}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'② DOE 方法'),React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:5}},(DOE_METHODS.map(m=>(
               React.createElement('button',{key:m.id,onClick:()=>setMethod(m.id),style:{display:"flex",alignItems:"center",gap:9,padding:"8px 10px",
-                borderRadius:8,cursor:"pointer",textAlign:"left",border:`1.5px solid ${method===m.id?m.color:C.border}`,
-                background:method===m.id?`${m.color}15`:C.card2,transition:"all .15s"}},React.createElement('span',{style:{fontSize:14}},(m.icon)),React.createElement('div',{style:{flex:1}},React.createElement('div',{style:{fontSize:11,fontWeight:700,color:method===m.id?m.color:C.text}},(m.label)),React.createElement('div',{style:{fontSize:9,color:C.dim}},(m.desc))))
-            ))))),React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},'③ 參數設定'),React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:10}},(NEEDS_N.includes(method)&&(
+                borderRadius:8,cursor:"pointer",textAlign:"left",border:"1.5px solid "+(method===m.id?m.color:C.border),
+                background:method===m.id?m.color+"15":C.card2,transition:"all .15s"}},React.createElement('span',{style:{fontSize:14}},(m.icon)),React.createElement('div',{style:{flex:1}},React.createElement('div',{style:{fontSize:11,fontWeight:700,color:method===m.id?m.color:C.text}},(m.label)),React.createElement('div',{style:{fontSize:9,color:C.dim}},(m.desc))))
+            ))))),React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:16}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},'③ 參數設定'),React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:10}},(NEEDS_N.includes(method)&&(
               React.createElement('div',null,React.createElement('label',{style:{fontSize:11,color:C.dim,display:"block",marginBottom:4}},'實驗點數 n =',React.createElement('span',{style:{color:C.cyan,fontFamily:"monospace"}},(n))),React.createElement('input',{type:'range',min:4,max:200,value:n,onChange:e=>setN(+e.target.value),style:{width:"100%",accentColor:C.cyan}}))
             )),(NEEDS_CTR.includes(method)&&(
               React.createElement('div',null,React.createElement('label',{style:{fontSize:11,color:C.dim,display:"block",marginBottom:4}},'中心點數 =',React.createElement('span',{style:{color:C.amber,fontFamily:"monospace"}},(center))),React.createElement('input',{type:'range',min:1,max:9,value:center,onChange:e=>setCenter(+e.target.value),style:{width:"100%",accentColor:C.amber}}))
             )),(NEEDS_LVL.includes(method)&&(
               React.createElement('div',null,React.createElement('label',{style:{fontSize:11,color:C.dim,display:"block",marginBottom:6}},'每因子水準數'),React.createElement('div',{style:{display:"flex",gap:6}},([2,3,4,5].map(l=>(
                     React.createElement('button',{key:l,onClick:()=>setLevels(l),style:{flex:1,padding:"7px 4px",borderRadius:6,
-                      border:`1px solid ${levels===l?C.purple:C.border}`,
-                      background:levels===l?`${C.purple}18`:"transparent",color:levels===l?C.purple:C.dim,fontSize:12,cursor:"pointer"}},(l))
+                      border:"1px solid "+(levels===l?C.purple:C.border),
+                      background:levels===l?C.purple+"18":"transparent",color:levels===l?C.purple:C.dim,fontSize:12,cursor:"pointer"}},(l))
                   )))),(factors.length>0&&React.createElement('div',{style:{marginTop:4,fontSize:10,color:C.dim}},'⇒',(Math.pow(levels,factors.length)),'個實驗點')))
             )),(NEEDS_ALP.includes(method)&&(
               React.createElement('div',null,React.createElement('label',{style:{fontSize:11,color:C.dim,display:"block",marginBottom:6}},'CCD 星形點位置 α'),React.createElement('div',{style:{display:"flex",gap:6}},([['face','面中心 (α=1)'],['rotatable','旋轉型']].map(([v,l])=>(
                     React.createElement('button',{key:v,onClick:()=>setAlpha(v),style:{flex:1,padding:"6px 4px",borderRadius:6,
-                      border:`1px solid ${alpha===v?C.yellow:C.border}`,
-                      background:alpha===v?`${C.yellow}18`:"transparent",color:alpha===v?C.yellow:C.dim,fontSize:10,cursor:"pointer",lineHeight:1.4}},(l))
+                      border:"1px solid "+(alpha===v?C.yellow:C.border),
+                      background:alpha===v?C.yellow+"18":"transparent",color:alpha===v?C.yellow:C.dim,fontSize:10,cursor:"pointer",lineHeight:1.4}},(l))
                   )))))
-            )))),React.createElement('button',{onClick:run,style:{padding:"13px",borderRadius:10,border:"none",background:C.green,color:"#06101a",fontSize:14,fontWeight:800,cursor:"pointer"}},'▶ 產生 DOE 設計'),(err&&React.createElement('div',{style:{padding:"10px 12px",borderRadius:8,background:"#180a0a",border:`1px solid ${C.red}33`,fontSize:11,color:C.red}},'⚠',(err)))),React.createElement('div',null,(!table?(
-          React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:60,textAlign:"center",color:C.dim}},React.createElement('div',{style:{fontSize:52,marginBottom:16,opacity:.3}},'🔬'),React.createElement('div',{style:{fontSize:14}},'設定因子與方法後點擊「產生 DOE 設計」'))
+            )))),React.createElement('button',{onClick:run,style:{padding:"13px",borderRadius:10,border:"none",background:C.green,color:"#06101a",fontSize:14,fontWeight:800,cursor:"pointer"}},'▶ 產生 DOE 設計'),(err&&React.createElement('div',{style:{padding:"10px 12px",borderRadius:8,background:"#180a0a",border:"1px solid "+C.red+"33",fontSize:11,color:C.red}},'⚠',(err)))),React.createElement('div',null,(!table?(
+          React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:60,textAlign:"center",color:C.dim}},React.createElement('div',{style:{fontSize:52,marginBottom:16,opacity:.3}},'🔬'),React.createElement('div',{style:{fontSize:14}},'設定因子與方法後點擊「產生 DOE 設計」'))
         ):(
-          React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}},React.createElement('span',{style:{fontSize:22}},(activeMeta.icon)),React.createElement('span',{style:{fontSize:18,fontWeight:800,color:activeMeta.color}},(table.method)),React.createElement('span',{style:{fontSize:11,fontFamily:"monospace",color:C.dim}},(table.rows.length),'個實驗點 ×',(factors.length),'個因子'),React.createElement('button',{onClick:download,style:{marginLeft:"auto",padding:"8px 16px",borderRadius:7,border:`1.5px solid ${C.green}`,background:`${C.green}18`,color:C.green,fontSize:12,fontWeight:700,cursor:"pointer"}},'⬇ 下載 Excel')),React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:14}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'因子覆蓋範圍'),(factors.map(f=>{
+          React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}},React.createElement('span',{style:{fontSize:22}},(activeMeta.icon)),React.createElement('span',{style:{fontSize:18,fontWeight:800,color:activeMeta.color}},(table.method)),React.createElement('span',{style:{fontSize:11,fontFamily:"monospace",color:C.dim}},(table.rows.length),'個實驗點 ×',(factors.length),'個因子'),React.createElement('button',{onClick:download,style:{marginLeft:"auto",padding:"8px 16px",borderRadius:7,border:"1.5px solid "+(C.green),background:C.green+"18",color:C.green,fontSize:12,fontWeight:700,cursor:"pointer"}},'⬇ 下載 Excel')),React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:14}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'因子覆蓋範圍'),(factors.map(f=>{
                 const vals=table.rows.map(r=>r[f.name]).filter(v=>typeof v==='number'&&isFinite(v));
                 if(!vals.length)return null;
                 const mn=vals.reduce((m,v)=>v<m?v:m,Infinity);
@@ -1063,12 +1038,12 @@ function DoePage({factors,setFactors,method,setMethod,n,setN,center,setCenter,
                 const cov=Math.min(100,(mx-mn)/range*100);
                 const color=cov>=95?C.green:cov>=80?C.amber:C.red;
                 return(
-                  React.createElement('div',{key:f.name,style:{marginBottom:8}},React.createElement('div',{style:{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:3}},React.createElement('span',{style:{color:C.text,fontWeight:600}},(f.name)),React.createElement('span',{style:{fontFamily:"monospace",fontSize:10,color:C.dim}},'[',(f.lo),',',(f.hi),'] → 覆蓋',React.createElement('span',{style:{color}},(cov.toFixed(0)),'%'))),React.createElement('div',{style:{height:5,background:"#1a2d3a",borderRadius:3,overflow:"hidden"}},React.createElement('div',{style:{height:"100%",width:`${cov}%`,background:color,borderRadius:3}})))
+                  React.createElement('div',{key:f.name,style:{marginBottom:8}},React.createElement('div',{style:{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:3}},React.createElement('span',{style:{color:C.text,fontWeight:600}},(f.name)),React.createElement('span',{style:{fontFamily:"monospace",fontSize:10,color:C.dim}},'[',(f.lo),',',(f.hi),'] → 覆蓋',React.createElement('span',{style:{color}},(cov.toFixed(0)),'%'))),React.createElement('div',{style:{height:5,background:"#1a2d3a",borderRadius:3,overflow:"hidden"}},React.createElement('div',{style:{height:"100%",width:cov+"%",background:color,borderRadius:3}})))
                 );
-              }))),React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:14,overflowX:"auto"}},React.createElement('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase"}},'DOE 設計表'),(table.rows.length>20&&React.createElement('div',{style:{fontSize:10,color:C.dim}},'顯示前 20 / 共',(table.rows.length)))),React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace"}},React.createElement('thead',null,React.createElement('tr',{style:{borderBottom:`2px solid ${C.border}`}},React.createElement('th',{style:{padding:"5px 8px",color:C.dim,fontFamily:"Syne",fontSize:10,textAlign:"center"}},'#'),(factors.map(f=>(
+              }))),React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:14,overflowX:"auto"}},React.createElement('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase"}},'DOE 設計表'),(table.rows.length>20&&React.createElement('div',{style:{fontSize:10,color:C.dim}},'顯示前 20 / 共',(table.rows.length)))),React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace"}},React.createElement('thead',null,React.createElement('tr',{style:{borderBottom:"2px solid "+(C.border)}},React.createElement('th',{style:{padding:"5px 8px",color:C.dim,fontFamily:"Syne",fontSize:10,textAlign:"center"}},'#'),(factors.map(f=>(
                       React.createElement('th',{key:f.name,style:{padding:"5px 10px",color:C.amber,fontFamily:"Syne",fontSize:11,textAlign:"center"}},(f.name),React.createElement('div',{style:{fontSize:9,color:C.dim,fontWeight:400}},'[',(f.lo),',',(f.hi),']'))
                     ))))),React.createElement('tbody',null,(table.rows.slice(0,20).map((row,i)=>(
-                    React.createElement('tr',{key:i,style:{borderBottom:`1px solid ${C.border}22`,background:i%2===0?"transparent":"#0a1820"}},React.createElement('td',{style:{padding:"5px 8px",textAlign:"center",color:C.dim}},(i+1)),(factors.map(f=>{
+                    React.createElement('tr',{key:i,style:{borderBottom:"1px solid "+C.border+"22",background:i%2===0?"transparent":"#0a1820"}},React.createElement('td',{style:{padding:"5px 8px",textAlign:"center",color:C.dim}},(i+1)),(factors.map(f=>{
                         const v=row[f.name];
                         const norm=typeof v==='number'?(v-f.lo)/((f.hi-f.lo)||1):0.5;
                         const col=norm<0.3?C.cyan:norm>0.7?C.amber:C.text;
@@ -1121,6 +1096,14 @@ function App(){
   const[doeTable,setDoeTable]=useState(null);
   const[doeError,setDoeError]=useState('');
   const[showPreview,setShowPreview]=useState(false);
+  // ── Adj R² calculator ──
+  const[adjRows,setAdjRows]=useState([]);
+  const[adjHeaders,setAdjHeaders]=useState([]);
+  const[adjFile,setAdjFile]=useState(null);
+  const[adjActual,setAdjActual]=useState('');
+  const[adjPred,setAdjPred]=useState('');
+  const[adjFactors,setAdjFactors]=useState(1);
+  const[adjResult,setAdjResult]=useState(null);
 
   const loadRows=(data,fname)=>{
     const hdrs=Object.keys(data[0]||{});
@@ -1130,6 +1113,20 @@ function App(){
     if(fname)setTrainFile({name:fname});
   };
 
+  // Auto-load demo data on first render
+  const loadRowsRef=useRef(null);
+  loadRowsRef.current=loadRows;
+  const[autoLoaded,setAutoLoaded]=useState(false);
+  if(!autoLoaded){
+    const data=genExampleData();
+    const hdrs=Object.keys(data[0]||{});
+    setTimeout(()=>{
+      loadRowsRef.current(data,"demo_turbine_data.xlsx");
+      setDemoLoaded(true);
+      setAutoLoaded(true);
+    },0);
+  }
+
   const loadDemo=()=>{
     const data=genExampleData();
     loadRows(data,"demo_turbine_data.xlsx");
@@ -1137,7 +1134,7 @@ function App(){
   };
 
   const onTrainFile=useCallback(f=>{setDemoLoaded(false);setTrainFile(f);parseFile(f,data=>loadRows(data,null));},[]); // eslint-disable-line
-  const onTestFile=useCallback(f=>{setTestFile(f);parseFile(f,data=>setTestRows(data));});
+  const onTestFile=useCallback(f=>{setTestFile(f);parseFile(f,data=>setTestRows(data));},[]); // eslint-disable-line
 
   const toggleX=col=>setXCols(p=>p.includes(col)?p.filter(c=>c!==col):[...p,col]);
 
@@ -1155,9 +1152,19 @@ function App(){
           Xtr=cX;ytr=cY;
           const tx=testRows.map(r=>xCols.map(c=>parseFloat(r[c])));
           const ty=testRows.map(r=>parseFloat(r[yCol]));
-          const tv=tx.map((x,i)=>x.every(v=>!isNaN(v))&&!isNaN(ty[i]));
-          Xts=tx.filter((_,i)=>tv[i]);yts=ty.filter((_,i)=>tv[i]);
-          setSplitMethodUsed('外部測試集');setSplitQuality(null);
+          // X must be fully valid; Y is optional (X-only test = predictions without metrics)
+          const xOk=tx.map(x=>x.every(v=>!isNaN(v)));
+          const yOk=ty.map(v=>!isNaN(v));
+          Xts=tx.filter((_,i)=>xOk[i]);
+          const tyF=ty.filter((_,i)=>xOk[i]);
+          const yOkF=yOk.filter((_,i)=>xOk[i]);
+          yts=yOkF.some(Boolean)?tyF.map((v,i)=>yOkF[i]?v:NaN).filter(v=>!isNaN(v)):[];
+          // If yts shorter than Xts (some Y missing), only keep matched rows
+          if(yts.length>0&&yts.length!==Xts.length){
+            const paired=Xts.map((x,i)=>({x,y:tyF[i],yv:yOkF[i]})).filter(p=>p.yv);
+            Xts=paired.map(p=>p.x);yts=paired.map(p=>p.y);
+          }
+          setSplitMethodUsed('外部測試集 ('+Xts.length+"筆)");setSplitQuality(null);
         } else if(splitMethod==="smart"){
           const sp=smartSplit(cX,splitR);
           Xtr=sp.trainIdx.map(i=>cX[i]);ytr=sp.trainIdx.map(i=>cY[i]);
@@ -1218,7 +1225,7 @@ function App(){
         return 0;
       };
       return oatSens(predictFn,allX,xCols);
-    }catch(_e){return null;}
+    }catch{return null;}
   },[result,trainRows,xCols]);
 
   const downloadEmulator=()=>{
@@ -1226,7 +1233,7 @@ function App(){
     const dict=buildEmulatorDict(result,xCols,yCol);
     const pkl=new PickleWriter().build(dict);
     const ts=new Date().toISOString().slice(0,10);
-    dlBinary(pkl,`${result.name}_emulator_${ts}.pkl`);
+    dlBinary(pkl,result.name+"_emulator_"+ts+".pkl");
   };
 
   // Pre-compute prediction chart data safely (avoid Math.max/min spread on large arrays)
@@ -1276,9 +1283,9 @@ function App(){
       const out=rows.map(row=>{
         try{
           const vals=pklModel.feature_names.map(fn=>parseFloat(row[fn]));
-          if(vals.some(isNaN))return{...row,[`${pklModel.target_name}_pred`]:'ERROR'};
-          return{...row,[`${pklModel.target_name}_pred`]:+runPklPrediction(pklModel,vals).toFixed(6)};
-        }catch(_e){return{...row,[`${pklModel.target_name}_pred`]:'ERROR'};}
+          if(vals.some(isNaN))return{...row,[(pklModel.target_name+"_pred")]:'ERROR'};
+          return{...row,[(pklModel.target_name+"_pred")]:+runPklPrediction(pklModel,vals).toFixed(6)};
+        }catch{return{...row,[(pklModel.target_name+"_pred")]:'ERROR'};}
       });
       setBatchResults(out);
     });
@@ -1286,11 +1293,11 @@ function App(){
 
   const downloadBatch=()=>{
     if(!batchResults.length)return;
-    dlXLSX(batchResults,`batch_predictions_${new Date().toISOString().slice(0,10)}.xlsx`);
+    dlXLSX(batchResults,"batch_predictions_"+new Date().toISOString().slice(0,10)+".xlsx");
   };
 
   // ── DOE handlers ──
-  const doeFactor_add=()=>setDoeFactors(p=>[...p,{name:`X${p.length+1}`,lo:0,hi:1}]);
+  const doeFactor_add=()=>setDoeFactors(p=>[...p,{name:'X'+(p.length+1),lo:0,hi:1}]);
   const doeFactor_rm=i=>setDoeFactors(p=>p.filter((_,j)=>j!==i));
   const doeFactor_set=(i,key,val)=>setDoeFactors(p=>p.map((f,j)=>j===i?{...f,[key]:val}:f));
   const runDOE=()=>{
@@ -1305,57 +1312,99 @@ function App(){
   };
   const downloadDOE=()=>{
     if(!doeTable)return;
-    dlXLSX(doeTable.rows,`DOE_${doeTable.method.replace(/ /g,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`);
+    const _dm=doeTable.method.replace(/ /g,"_"),_dd=new Date().toISOString().slice(0,10);dlXLSX(doeTable.rows,"DOE_"+_dm+"_"+_dd+".xlsx");
+  };
+
+  // ── Adj R² handlers ──
+  const onAdjFile=useCallback(f=>{
+    setAdjFile(f);setAdjResult(null);
+    parseFile(f,data=>{
+      const hdrs=Object.keys(data[0]||{});
+      setAdjHeaders(hdrs);setAdjRows(data);
+      setAdjActual(hdrs[0]||'');setAdjPred(hdrs[1]||'');
+    });
+  },[]);
+
+  const calcAdjR2=()=>{
+    if(!adjRows.length||!adjActual||!adjPred)return;
+    const yA=adjRows.map(r=>parseFloat(r[adjActual]));
+    const yP=adjRows.map(r=>parseFloat(r[adjPred]));
+    const valid=yA.map((_,i)=>!isNaN(yA[i])&&!isNaN(yP[i]));
+    const ya=yA.filter((_,i)=>valid[i]);
+    const yp=yP.filter((_,i)=>valid[i]);
+    const n=ya.length;
+    const p=Math.max(1,adjFactors);
+    if(n<=p+1){setAdjResult({error:'樣本數必須大於 factor 數量 + 1'});return;}
+    const yMean=ya.reduce((s,v)=>s+v,0)/n;
+    const ssRes=ya.reduce((s,v,i)=>s+(v-yp[i])**2,0);
+    const ssTot=ya.reduce((s,v)=>s+(v-yMean)**2,0);
+    const r2=ssTot>0?1-ssRes/ssTot:1;
+    const adjR2=1-(1-r2)*(n-1)/(n-p-1);
+    const mae=ya.reduce((s,v,i)=>s+Math.abs(v-yp[i]),0)/n;
+    const rmse=Math.sqrt(ssRes/n);
+    setAdjResult({r2,adjR2,mae,rmse,n,p,ssRes,ssTot,yMean});
   };
 
 
+  React.useEffect(()=>{
+    const link=document.createElement("link");
+    link.rel="stylesheet";
+    link.href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap";
+    document.head.appendChild(link);
+  },[]);
   return(
-    React.createElement(React.Fragment,null,React.createElement('link',{href:'https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap',rel:'stylesheet'}),React.createElement('div',{style:{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'Syne',sans-serif",padding:"24px 20px",boxSizing:"border-box"}},React.createElement('div',{style:{marginBottom:24,display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}},React.createElement('h1',{style:{margin:0,fontSize:24,fontWeight:800,color:"#e8f4ff",letterSpacing:-0.5}},'迴歸分析引擎'),React.createElement('span',{style:{fontSize:10,letterSpacing:2,color:C.cyan,textTransform:"uppercase",fontFamily:"monospace"}},'REGRESSION LAB v2'),React.createElement('div',{style:{display:"flex",gap:0,borderRadius:8,border:`1px solid ${C.border}`,overflow:"hidden",marginLeft:8}},([["analysis","📊 建模分析"],["predict","🎯 模型預測"],["doe","🔬 DOE 撒點"]].map(([m,l])=>(
+    React.createElement(React.Fragment,null,React.createElement('div',{style:{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"Syne,sans-serif",padding:"24px 20px",boxSizing:"border-box"}},React.createElement('div',{style:{marginBottom:24,display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}},React.createElement('h1',{style:{margin:0,fontSize:24,fontWeight:800,color:"#e8f4ff",letterSpacing:-0.5}},'迴歸分析引擎'),React.createElement('span',{style:{fontSize:10,letterSpacing:2,color:C.cyan,textTransform:"uppercase",fontFamily:"monospace"}},'REGRESSION LAB v2'),React.createElement('div',{style:{display:"flex",gap:0,borderRadius:8,border:"1px solid "+(C.border),overflow:"hidden",marginLeft:8}},([["analysis","📊 建模分析"],["predict","🎯 模型預測"],["doe","🔬 DOE 撒點"],["adjr2","📐 Adj R²"]].map((item)=>{const m=item[0],l=item[1];return(
               React.createElement('button',{key:m,onClick:()=>setMode(m),style:{padding:"7px 18px",border:"none",cursor:"pointer",fontSize:12,fontWeight:mode===m?700:400,
                 background:mode===m?C.cyan:"transparent",color:mode===m?"#06101a":C.dim,transition:"all .15s"}},(l))
-            )))),React.createElement('div',{style:{marginLeft:"auto",display:"flex",gap:8}},(mode==="analysis"&&demoLoaded&&React.createElement('button',{onClick:()=>dlXLSX(trainRows,"demo_turbine_data.xlsx"),style:{padding:"7px 14px",borderRadius:7,border:`1px solid ${C.border}`,background:"transparent",color:C.dim,fontSize:11,cursor:"pointer"}},'⬇ 下載範例 Excel')),(mode==="analysis"&&result&&React.createElement('button',{onClick:downloadEmulator,style:{padding:"7px 16px",borderRadius:7,border:`1.5px solid ${C.amber}`,background:`${C.amber}18`,color:C.amber,fontSize:12,fontWeight:700,cursor:"pointer"}},'⬇ 下載 Emulator .pkl')))),(mode==="analysis"&&(
-        React.createElement('div',{style:{display:"grid",gridTemplateColumns:"300px 1fr",gap:18,alignItems:"start"}},React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'① 資料匯入'),React.createElement(DropZone,{label:'拖曳訓練資料 .xlsx / .xls / .csv',file:trainFile,onFile:onTrainFile,accent:C.cyan}),React.createElement('div',{style:{margin:"10px 0",textAlign:"center",fontSize:11,color:C.dim}},'— 或 —'),React.createElement('button',{onClick:loadDemo,style:{width:"100%",padding:"10px",borderRadius:8,border:`1px solid ${C.green}44`,
-                background:`${C.green}11`,color:C.green,fontSize:12,fontWeight:700,cursor:"pointer"}},'🚀 載入示範資料（渦輪引擎）'),(trainRows.length>0&&(
+            );}))),React.createElement('div',{style:{marginLeft:"auto",display:"flex",gap:8}},(mode==="analysis"&&demoLoaded&&React.createElement('button',{onClick:()=>dlXLSX(trainRows,"demo_turbine_data.xlsx"),style:{padding:"7px 14px",borderRadius:7,border:"1px solid "+(C.border),background:"transparent",color:C.dim,fontSize:11,cursor:"pointer"}},'⬇ 下載範例 Excel')),(mode==="analysis"&&result&&React.createElement('button',{onClick:downloadEmulator,style:{padding:"7px 16px",borderRadius:7,border:"1.5px solid "+(C.amber),background:C.amber+"18",color:C.amber,fontSize:12,fontWeight:700,cursor:"pointer"}},'⬇ 下載 Emulator .pkl')))),(mode==="analysis"&&(
+        React.createElement('div',{style:{display:"grid",gridTemplateColumns:"300px 1fr",gap:18,alignItems:"start"}},React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:16}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'① 資料匯入'),React.createElement(DropZone,{label:'拖曳訓練資料 .xlsx / .xls / .csv',file:trainFile,onFile:onTrainFile,accent:C.cyan}),React.createElement('div',{style:{margin:"10px 0",textAlign:"center",fontSize:11,color:C.dim}},'— 或 —'),React.createElement('button',{onClick:loadDemo,style:{width:"100%",padding:"10px",borderRadius:8,border:"1px solid "+C.green+"44",
+                background:C.green+"11",color:C.green,fontSize:12,fontWeight:700,cursor:"pointer"}},'🚀 載入示範資料（渦輪引擎）'),(trainRows.length>0&&(
                 React.createElement('div',{style:{marginTop:8,fontSize:11,color:C.dim,fontFamily:"monospace"}},'✓',React.createElement('span',{style:{color:C.cyan}},(trainRows.length)),'筆 ·',React.createElement('span',{style:{color:C.amber}},(headers.length)),'欄',(demoLoaded&&React.createElement('span',{style:{color:C.green,marginLeft:6}},'[示範資料]')))
               )),(trainRows.length>0&&(
                 React.createElement('label',{style:{display:"flex",alignItems:"center",gap:7,marginTop:10,cursor:"pointer",userSelect:"none"}},React.createElement('input',{type:'checkbox',checked:showPreview,onChange:e=>setShowPreview(e.target.checked),style:{accentColor:C.cyan,width:14,height:14}}),React.createElement('span',{style:{fontSize:11,color:showPreview?C.cyan:C.dim}},'預覽資料'))
               )),React.createElement('div',{style:{marginTop:14,marginBottom:8,fontSize:10,letterSpacing:1,color:C.dim,textTransform:"uppercase"}},'測試資料'),React.createElement('div',{style:{display:"flex",gap:6,marginBottom:10}},(["split","upload"].map(m=>(
-                  React.createElement('button',{key:m,onClick:()=>setTestMode(m),style:{flex:1,padding:"6px 0",borderRadius:6,border:`1px solid ${testMode===m?C.amber:C.border}`,
+                  React.createElement('button',{key:m,onClick:()=>setTestMode(m),style:{flex:1,padding:"6px 0",borderRadius:6,border:"1px solid "+(testMode===m?C.amber:C.border),
                     background:testMode===m?"#2a180011":"transparent",color:testMode===m?C.amber:C.dim,fontSize:11,cursor:"pointer"}},(m==="split"?"自動拆分":"另外上傳"))
                 )))),(testMode==="split"?(
-                React.createElement('div',null,React.createElement('div',{style:{display:"flex",justifyContent:"space-between",fontSize:10,marginBottom:4,color:C.dim}},React.createElement('span',null,'Train',(splitR),'%'),React.createElement('span',null,'Test',(100-splitR),'%')),React.createElement('input',{type:'range',min:50,max:90,step:5,value:splitR,onChange:e=>setSplitR(+e.target.value),style:{width:"100%",accentColor:C.amber,marginBottom:10}}),React.createElement('div',{style:{fontSize:10,letterSpacing:1,color:C.dim,textTransform:"uppercase",marginBottom:6}},'拆分策略'),React.createElement('div',{style:{display:"flex",gap:0,borderRadius:7,border:`1px solid ${C.border}`,overflow:"hidden",marginBottom:10}},([["smart","🧠 智慧拆分"],["random","🎲 均勻隨機"]].map(([m,l])=>(
+                React.createElement('div',null,React.createElement('div',{style:{display:"flex",justifyContent:"space-between",fontSize:10,marginBottom:4,color:C.dim}},React.createElement('span',null,'Train',(splitR),'%'),React.createElement('span',null,'Test',(100-splitR),'%')),React.createElement('input',{type:'range',min:50,max:90,step:5,value:splitR,onChange:e=>setSplitR(+e.target.value),style:{width:"100%",accentColor:C.amber,marginBottom:10}}),React.createElement('div',{style:{fontSize:10,letterSpacing:1,color:C.dim,textTransform:"uppercase",marginBottom:6}},'拆分策略'),React.createElement('div',{style:{display:"flex",gap:0,borderRadius:7,border:"1px solid "+(C.border),overflow:"hidden",marginBottom:10}},([["smart","🧠 智慧拆分"],["random","🎲 均勻隨機"]].map(([m,l])=>(
                       React.createElement('button',{key:m,onClick:()=>setSplitMethod(m),style:{flex:1,padding:"7px 4px",border:"none",cursor:"pointer",fontSize:11,fontWeight:splitMethod===m?700:400,
                         background:splitMethod===m?"#1a3a10":"transparent",color:splitMethod===m?C.green:C.dim,transition:"all .15s",lineHeight:1.3}},(l))
                     )))),(splitMethod==="smart"&&(
-                    React.createElement('div',{style:{fontSize:10,color:C.dim,background:"#0a1a0a",border:`1px solid ${C.green}22`,borderRadius:6,padding:"7px 10px",lineHeight:1.5}},'n≤500 →',React.createElement('span',{style:{color:C.green}},'DUPLEX'),'（最大化空間覆蓋，確保插值性）',React.createElement('br',null),'n＞500 →',React.createElement('span',{style:{color:C.green}},'K-means 分層'),'（分群比例採樣）')
+                    React.createElement('div',{style:{fontSize:10,color:C.dim,background:"#0a1a0a",border:"1px solid "+C.green+"22",borderRadius:6,padding:"7px 10px",lineHeight:1.5}},'n≤500 →',React.createElement('span',{style:{color:C.green}},'DUPLEX'),'（最大化空間覆蓋，確保插值性）',React.createElement('br',null),'n＞500 →',React.createElement('span',{style:{color:C.green}},'K-means 分層'),'（分群比例採樣）')
                   )),(splitQuality&&splitMethod==="smart"&&(
-                    React.createElement('div',{style:{marginTop:10,background:"#0a1a20",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px"}},React.createElement('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}},React.createElement('span',{style:{fontSize:10,letterSpacing:1,color:C.dim,textTransform:"uppercase"}},'拆分品質'),React.createElement('span',{style:{fontFamily:"monospace",fontSize:13,fontWeight:800,
+                    React.createElement('div',{style:{marginTop:10,background:"#0a1a20",border:"1px solid "+(C.border),borderRadius:8,padding:"10px 12px"}},React.createElement('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}},React.createElement('span',{style:{fontSize:10,letterSpacing:1,color:C.dim,textTransform:"uppercase"}},'拆分品質'),React.createElement('span',{style:{fontFamily:"monospace",fontSize:13,fontWeight:800,
                           color:splitQuality.score>=80?C.green:splitQuality.score>=60?C.amber:C.red}},(splitQuality.score),'/100')),React.createElement('div',{style:{fontSize:10,color:C.dim,marginBottom:6}},'方法：',React.createElement('span',{style:{color:C.cyan}},(splitMethodUsed))),([
                         ["插值覆蓋率",splitQuality.interpRate,"%","fraction of test within training bounds"],
                         ["分佈相似性",1-Math.min(1,splitQuality.bias*3),null,"train/test mean alignment"],
                         ["空間填充度",splitQuality.sfScore,null,"training set coverage uniformity"],
                       ].map(([lbl,val,unit])=>(
-                        React.createElement('div',{key:lbl,style:{marginBottom:5}},React.createElement('div',{style:{display:"flex",justifyContent:"space-between",fontSize:10,marginBottom:2}},React.createElement('span',{style:{color:C.dim}},(lbl)),React.createElement('span',{style:{fontFamily:"monospace",color:val>=0.85?C.green:val>=0.6?C.amber:C.red}},(unit==="%"?`${(val*100).toFixed(0)}%`:(val*100).toFixed(0)+"%"))),React.createElement('div',{style:{height:4,background:"#1a2d3a",borderRadius:2,overflow:"hidden"}},React.createElement('div',{style:{height:"100%",width:`${val*100}%`,borderRadius:2,
+                        React.createElement('div',{key:lbl,style:{marginBottom:5}},React.createElement('div',{style:{display:"flex",justifyContent:"space-between",fontSize:10,marginBottom:2}},React.createElement('span',{style:{color:C.dim}},(lbl)),React.createElement('span',{style:{fontFamily:"monospace",color:val>=0.85?C.green:val>=0.6?C.amber:C.red}},(unit==="%"?(val*100).toFixed(0)+"%":(val*100).toFixed(0)+"%"))),React.createElement('div',{style:{height:4,background:"#1a2d3a",borderRadius:2,overflow:"hidden"}},React.createElement('div',{style:{height:"100%",width:(val*100)+"%",borderRadius:2,
                               background:val>=0.85?C.green:val>=0.6?C.amber:C.red,transition:"width .4s"}})))
                       ))))
                   )))
               ):(
-                React.createElement(DropZone,{label:'測試資料',file:testFile,onFile:onTestFile,accent:C.amber})
+                React.createElement(React.Fragment,null,React.createElement(DropZone,{label:'測試資料',file:testFile,onFile:onTestFile,accent:C.amber}),(testRows.length>0&&(
+                  React.createElement('div',{style:{marginTop:6,fontSize:11,fontFamily:"monospace",color:C.dim}},("✓ 已載入 "),React.createElement('span',{style:{color:C.amber}},(testRows.length)),(" 筆測試資料"),(headers.length>0&&yCol&&Object.keys(testRows[0]||{}).includes(yCol)&&(
+                      React.createElement('span',{style:{color:C.green,marginLeft:4}},(" · 含 Y 欄"))
+                    )),(headers.length>0&&yCol&&!Object.keys(testRows[0]||{}).includes(yCol)&&(
+                      React.createElement('span',{style:{color:C.amber,marginLeft:4}},(" · 無 Y 欄"))
+                    )))
+                )))
               ))),(headers.length>0&&(
-              React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'② 欄位設定'),React.createElement('div',{style:{fontSize:11,color:C.dim,marginBottom:6}},'Y 應變數'),React.createElement('select',{value:yCol,onChange:e=>setYCol(e.target.value),style:{width:"100%",background:"#0a1820",border:`1px solid ${C.cyan}44`,borderRadius:6,padding:"7px 10px",color:C.text,fontSize:12,marginBottom:12,outline:"none"}},(headers.map(h=>React.createElement('option',{key:h},(h))))),React.createElement('div',{style:{fontSize:11,color:C.dim,marginBottom:6}},'X 自變數',React.createElement('span',{style:{color:C.amber}},'(',(xCols.length),')')),React.createElement('div',{style:{maxHeight:160,overflowY:"auto",display:"flex",flexDirection:"column",gap:3}},(headers.filter(h=>h!==yCol).map(h=>(
+              React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:16}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'② 欄位設定'),React.createElement('div',{style:{fontSize:11,color:C.dim,marginBottom:6}},'Y 應變數'),React.createElement('select',{value:yCol,onChange:e=>setYCol(e.target.value),style:{width:"100%",background:"#0a1820",border:"1px solid "+C.cyan+"44",borderRadius:6,padding:"7px 10px",color:C.text,fontSize:12,marginBottom:12,outline:"none"}},(headers.map(h=>React.createElement('option',{key:h},(h))))),React.createElement('div',{style:{fontSize:11,color:C.dim,marginBottom:6}},'X 自變數',React.createElement('span',{style:{color:C.amber}},'(',(xCols.length),')')),React.createElement('div',{style:{maxHeight:160,overflowY:"auto",display:"flex",flexDirection:"column",gap:3}},(headers.filter(h=>h!==yCol).map(h=>(
                     React.createElement('label',{key:h,style:{display:"flex",alignItems:"center",gap:7,cursor:"pointer",padding:"3px 7px",borderRadius:5,
-                      background:xCols.includes(h)?"#162840":"transparent",border:`1px solid ${xCols.includes(h)?C.amber+"44":C.border}`,fontSize:12}},React.createElement('input',{type:'checkbox',checked:xCols.includes(h),onChange:()=>toggleX(h),style:{accentColor:C.amber}}),React.createElement('span',{style:{color:xCols.includes(h)?C.amber:C.text}},(h)))
+                      background:xCols.includes(h)?"#162840":"transparent",border:"1px solid "+(xCols.includes(h)?C.amber+"44":C.border),fontSize:12}},React.createElement('input',{type:'checkbox',checked:xCols.includes(h),onChange:()=>toggleX(h),style:{accentColor:C.amber}}),React.createElement('span',{style:{color:xCols.includes(h)?C.amber:C.text}},(h)))
                   )))))
             )),(headers.length>0&&(
-              React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'③ 演算法'),React.createElement('div',{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}},(Object.keys(ALGOS).map(id=>React.createElement(AlgoCard,{key:id,id:id,active:algo===id,onClick:setAlgo})))))
+              React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:16}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'③ 演算法'),React.createElement('div',{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7}},(Object.keys(ALGOS).map(id=>React.createElement(AlgoCard,{key:id,id:id,active:algo===id,onClick:setAlgo})))))
             )),(headers.length>0&&xCols.length>0&&(
               React.createElement('button',{onClick:run,disabled:running,style:{padding:"13px",borderRadius:10,border:"none",background:running?"#1a3040":C.cyan,color:"#06101a",fontSize:14,fontWeight:800,cursor:running?"not-allowed":"pointer",letterSpacing:0.5}},(running?"⚙ 計算中…":"▶ 執行分析"))
             ))),React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:16}},(showPreview&&trainRows.length>0&&(
-              React.createElement('div',{style:{background:C.card,border:`1px solid ${C.cyan}44`,borderRadius:12,padding:16}},React.createElement('div',{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}},React.createElement('div',{style:{display:"flex",alignItems:"center",gap:8}},React.createElement('span',{style:{fontSize:13}},'🗂'),React.createElement('span',{style:{fontSize:10,letterSpacing:2,color:C.cyan,textTransform:"uppercase"}},'資料預覽'),React.createElement('span',{style:{fontFamily:"monospace",fontSize:10,color:C.dim}},'前 10 筆 / 共',(trainRows.length))),React.createElement('div',{style:{display:"flex",gap:6}},React.createElement('span',{style:{fontFamily:"monospace",fontSize:10,color:C.dim,background:C.card2,padding:"2px 8px",borderRadius:4}},(headers.length),'欄'),React.createElement('span',{style:{fontFamily:"monospace",fontSize:10,color:C.dim,background:C.card2,padding:"2px 8px",borderRadius:4}},(trainRows.length),'列'))),React.createElement('div',{style:{overflowX:"auto"}},React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace",whiteSpace:"nowrap"}},React.createElement('thead',null,React.createElement('tr',{style:{borderBottom:`2px solid ${C.border}`}},React.createElement('th',{style:{padding:"5px 8px",color:C.dim,textAlign:"center",fontSize:10}},'#'),(headers.map(h=>(
+              React.createElement('div',{style:{background:C.card,border:"1px solid "+C.cyan+"44",borderRadius:12,padding:16}},React.createElement('div',{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}},React.createElement('div',{style:{display:"flex",alignItems:"center",gap:8}},React.createElement('span',{style:{fontSize:13}},'🗂'),React.createElement('span',{style:{fontSize:10,letterSpacing:2,color:C.cyan,textTransform:"uppercase"}},'資料預覽'),React.createElement('span',{style:{fontFamily:"monospace",fontSize:10,color:C.dim}},'前 10 筆 / 共',(trainRows.length))),React.createElement('div',{style:{display:"flex",gap:6}},React.createElement('span',{style:{fontFamily:"monospace",fontSize:10,color:C.dim,background:C.card2,padding:"2px 8px",borderRadius:4}},(headers.length),'欄'),React.createElement('span',{style:{fontFamily:"monospace",fontSize:10,color:C.dim,background:C.card2,padding:"2px 8px",borderRadius:4}},(trainRows.length),'列'))),React.createElement('div',{style:{overflowX:"auto"}},React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace",whiteSpace:"nowrap"}},React.createElement('thead',null,React.createElement('tr',{style:{borderBottom:"2px solid "+(C.border)}},React.createElement('th',{style:{padding:"5px 8px",color:C.dim,textAlign:"center",fontSize:10}},'#'),(headers.map(h=>(
                           React.createElement('th',{key:h,style:{padding:"5px 12px",textAlign:"right",fontFamily:"Syne",fontSize:11,
                             color:h===yCol?C.amber:xCols.includes(h)?C.cyan:C.dim,whiteSpace:"nowrap"}},(h),React.createElement('div',{style:{fontSize:8,fontWeight:400,color:C.dim,letterSpacing:1}},(h===yCol?"Y 目標":xCols.includes(h)?"X 特徵":"—")))
                         ))))),React.createElement('tbody',null,(trainRows.slice(0,10).map((row,i)=>(
-                        React.createElement('tr',{key:i,style:{borderBottom:`1px solid ${C.border}22`,background:i%2===0?"transparent":C.card2}},React.createElement('td',{style:{padding:"5px 8px",textAlign:"center",color:C.dim}},(i+1)),(headers.map(h=>{
+                        React.createElement('tr',{key:i,style:{borderBottom:"1px solid "+C.border+"22",background:i%2===0?"transparent":C.card2}},React.createElement('td',{style:{padding:"5px 8px",textAlign:"center",color:C.dim}},(i+1)),(headers.map(h=>{
                             const v=row[h];
                             const num=parseFloat(v);
                             const isNum=!isNaN(num);
@@ -1364,34 +1413,34 @@ function App(){
                                 color:h===yCol?C.amber:xCols.includes(h)?C.text:C.dim}},(isNum?num.toLocaleString():String(v)))
                             );
                           })))
-                      )))),React.createElement('tfoot',null,React.createElement('tr',{style:{borderTop:`1px solid ${C.border}`}},React.createElement('td',{style:{padding:"5px 8px",textAlign:"center",color:C.dim,fontSize:9}},'…'),(headers.map(h=>{
+                      )))),React.createElement('tfoot',null,React.createElement('tr',{style:{borderTop:"1px solid "+(C.border)}},React.createElement('td',{style:{padding:"5px 8px",textAlign:"center",color:C.dim,fontSize:9}},'…'),(headers.map(h=>{
                           const vals=trainRows.map(r=>parseFloat(r[h])).filter(v=>!isNaN(v));
                           const mean=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null;
                           return(
-                            React.createElement('td',{key:h,style:{padding:"5px 12px",textAlign:"right",fontSize:9,color:C.dim}},(mean!=null?`avg ${mean.toFixed(2)}`:"—"))
+                            React.createElement('td',{key:h,style:{padding:"5px 12px",textAlign:"right",fontSize:9,color:C.dim}},(mean!=null?'avg '+(mean.toFixed(2)):"—"))
                           );
                         })))))))
             )),(!result&&!running&&!showPreview&&(
-              React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:60,textAlign:"center",color:C.dim}},React.createElement('div',{style:{fontSize:52,marginBottom:16,opacity:.3}},'🔮'),React.createElement('div',{style:{fontSize:14}},'匯入資料後執行分析，或點擊「載入示範資料」快速體驗'))
+              React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:60,textAlign:"center",color:C.dim}},React.createElement('div',{style:{fontSize:52,marginBottom:16,opacity:.3}},'🔮'),React.createElement('div',{style:{fontSize:14}},'匯入資料後執行分析，或點擊「載入示範資料」快速體驗'))
             )),(result&&(
-              React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},React.createElement('span',{style:{fontSize:22}},(ALGOS[result.name]?.icon)),React.createElement('span',{style:{fontSize:17,fontWeight:800,color:ALGOS[result.name]?.color}},(ALGOS[result.name]?.label)),(algo==="best"&&React.createElement('span',{style:{fontSize:10,background:"#ffe04022",color:C.yellow,border:`1px solid ${C.yellow}44`,borderRadius:4,padding:"2px 8px",letterSpacing:1}},'AUTO-SELECTED')),React.createElement('span',{style:{fontSize:10,color:C.dim,fontFamily:"monospace"}},(result.trainM?.n),'train ·',(result.testM?.n??0),'test'),React.createElement('button',{onClick:downloadEmulator,style:{marginLeft:"auto",padding:"6px 14px",borderRadius:6,border:`1px solid ${C.amber}44`,
-                    background:`${C.amber}11`,color:C.amber,fontSize:11,cursor:"pointer"}},'⬇ .pkl')),(bestAll&&(
-                  React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:14,overflowX:"auto"}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'模型比較'),React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace"}},React.createElement('thead',null,React.createElement('tr',{style:{color:C.dim,borderBottom:`1px solid ${C.border}`}},React.createElement('th',{style:{textAlign:"left",padding:"4px 8px"}},'模型'),React.createElement('th',{style:{padding:"4px 8px"}},'Train R²'),React.createElement('th',{style:{padding:"4px 8px"}},'Test R²'),React.createElement('th',{style:{padding:"4px 8px"}},'RMSE(test)'),React.createElement('th',{style:{padding:"4px 8px"}},'MAE(test)'))),React.createElement('tbody',null,(bestAll.map((r,i)=>(
-                        React.createElement('tr',{key:r.name,style:{background:i===0?"#1a3a0a":"transparent",borderBottom:`1px solid ${C.border}22`}},React.createElement('td',{style:{padding:"5px 8px",color:i===0?C.green:C.text}},(i===0?"🏆 ":""),(ALGOS[r.name]?.label)),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px",color:C.cyan}},(fmt(r.trainM?.r2))),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px",color:C.amber}},(r.testM?fmt(r.testM.r2):"—")),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px"}},(r.testM?fmt(r.testM.rmse):"—")),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px"}},(fmt((r.testM??r.trainM)?.mae))))
+              React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},React.createElement('span',{style:{fontSize:22}},(ALGOS[result.name]?.icon)),React.createElement('span',{style:{fontSize:17,fontWeight:800,color:ALGOS[result.name]?.color}},(ALGOS[result.name]?.label)),(algo==="best"&&React.createElement('span',{style:{fontSize:10,background:"#ffe04022",color:C.yellow,border:"1px solid "+C.yellow+"44",borderRadius:4,padding:"2px 8px",letterSpacing:1}},'AUTO-SELECTED')),React.createElement('span',{style:{fontSize:10,color:C.dim,fontFamily:"monospace"}},(result.trainM?.n),'train ·',(result.testM?.n??0),'test'),React.createElement('button',{onClick:downloadEmulator,style:{marginLeft:"auto",padding:"6px 14px",borderRadius:6,border:"1px solid "+C.amber+"44",
+                    background:C.amber+"11",color:C.amber,fontSize:11,cursor:"pointer"}},'⬇ .pkl')),(bestAll&&(
+                  React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:14,overflowX:"auto"}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'模型比較'),React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace"}},React.createElement('thead',null,React.createElement('tr',{style:{color:C.dim,borderBottom:"1px solid "+(C.border)}},React.createElement('th',{style:{textAlign:"left",padding:"4px 8px"}},'模型'),React.createElement('th',{style:{padding:"4px 8px"}},'Train R²'),React.createElement('th',{style:{padding:"4px 8px"}},'Test R²'),React.createElement('th',{style:{padding:"4px 8px"}},'RMSE(test)'),React.createElement('th',{style:{padding:"4px 8px"}},'MAE(test)'))),React.createElement('tbody',null,(bestAll.map((r,i)=>(
+                        React.createElement('tr',{key:r.name,style:{background:i===0?"#1a3a0a":"transparent",borderBottom:"1px solid "+C.border+"22"}},React.createElement('td',{style:{padding:"5px 8px",color:i===0?C.green:C.text}},(i===0?"🏆 ":""),(ALGOS[r.name]?.label)),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px",color:C.cyan}},(fmt(r.trainM?.r2))),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px",color:C.amber}},(r.testM?fmt(r.testM.r2):"—")),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px"}},(r.testM?fmt(r.testM.rmse):"—")),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px"}},(fmt((r.testM??r.trainM)?.mae))))
                       ))))))
-                )),React.createElement('div',{style:{display:"flex",gap:3,borderBottom:`1px solid ${C.border}`,paddingBottom:6}},([["overview","概覽"],["metrics","指標"],["predictions","預測圖"],["sensitivity","敏感度"]].map(([k,l])=>(
+                )),React.createElement('div',{style:{display:"flex",gap:3,borderBottom:"1px solid "+(C.border),paddingBottom:6}},([["overview","概覽"],["metrics","指標"],["predictions","預測圖"],["sensitivity","敏感度"]].map(([k,l])=>(
                     React.createElement(Tab,{key:k,label:l,active:tab===k,onClick:()=>setTab(k)})
                   )))),(tab==="overview"&&(
                   React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:9}},React.createElement(MC,{label:'Train R²',value:fmt(result.trainM?.r2),color:C.cyan}),React.createElement(MC,{label:'Test R²',value:fmt(result.testM?.r2),color:C.amber}),React.createElement(MC,{label:'Train RMSE',value:fmt(result.trainM?.rmse),color:C.text}),React.createElement(MC,{label:'Test RMSE',value:fmt(result.testM?.rmse),color:C.text}),React.createElement(MC,{label:'MAE',value:fmt((result.testM??result.trainM)?.mae),color:C.green}),React.createElement(MC,{label:'MAPE',value:fmt((result.testM??result.trainM)?.mape,2),color:C.purple,unit:'%'})),(result.modelInfo?.coefficients&&(
-                      React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:14}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'模型係數'),(result.modelInfo.intercept!=null&&React.createElement('div',{style:{fontFamily:"monospace",fontSize:12,color:C.dim,marginBottom:8}},'Intercept =',React.createElement('span',{style:{color:C.text}},(fmt(result.modelInfo.intercept))))),React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:4}},(result.modelInfo.coefficients.slice(0,14).map(c=>{
+                      React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:14}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'模型係數'),(result.modelInfo.intercept!=null&&React.createElement('div',{style:{fontFamily:"monospace",fontSize:12,color:C.dim,marginBottom:8}},'Intercept =',React.createElement('span',{style:{color:C.text}},(fmt(result.modelInfo.intercept))))),React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:4}},(result.modelInfo.coefficients.slice(0,14).map(c=>{
                             const maxAbs=result.modelInfo.coefficients.reduce((m,cc)=>Math.abs(cc.value)>m?Math.abs(cc.value):m,0)||1;
                             return(
-                              React.createElement('div',{key:c.name,style:{display:"flex",alignItems:"center",gap:8}},React.createElement('span',{style:{width:110,fontSize:11,color:C.dim,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flexShrink:0}},(c.name)),React.createElement('div',{style:{flex:1,height:5,background:C.card2,borderRadius:3,overflow:"hidden"}},React.createElement('div',{style:{height:"100%",width:`${Math.abs(c.value)/maxAbs*100}%`,background:c.value>=0?C.cyan:C.red,borderRadius:3}})),React.createElement('span',{style:{width:80,fontFamily:"monospace",fontSize:11,textAlign:"right",color:c.value>=0?C.cyan:C.red}},(fmt(c.value))))
+                              React.createElement('div',{key:c.name,style:{display:"flex",alignItems:"center",gap:8}},React.createElement('span',{style:{width:110,fontSize:11,color:C.dim,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flexShrink:0}},(c.name)),React.createElement('div',{style:{flex:1,height:5,background:C.card2,borderRadius:3,overflow:"hidden"}},React.createElement('div',{style:{height:"100%",width:(Math.abs(c.value)/maxAbs*100)+"%",background:c.value>=0?C.cyan:C.red,borderRadius:3}})),React.createElement('span',{style:{width:80,fontFamily:"monospace",fontSize:11,textAlign:"right",color:c.value>=0?C.cyan:C.red}},(fmt(c.value))))
                             );
                           }))))
-                    )),(result.name==="gpr"&&React.createElement('div',{style:{background:"#0a1e10",border:`1px solid ${C.green}33`,borderRadius:8,padding:"10px 14px",fontSize:11,color:C.green}},'🔮 高斯過程迴歸：RBF 核函數 (σ_f=1, ℓ=1, σ_n=0.1)。訓練點超過 250 筆時使用前 250 筆訓練。')))
+                    )),(result.name==="gpr"&&React.createElement('div',{style:{background:"#0a1e10",border:"1px solid "+C.green+"33",borderRadius:8,padding:"10px 14px",fontSize:11,color:C.green}},'🔮 高斯過程迴歸：RBF 核函數 (σ_f=1, ℓ=1, σ_n=0.1)。訓練點超過 250 筆時使用前 250 筆訓練。')))
                 )),(tab==="metrics"&&(
-                  React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:18,overflowX:"auto"}},React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:12}},React.createElement('thead',null,React.createElement('tr',{style:{color:C.dim,borderBottom:`2px solid ${C.border}`}},React.createElement('th',{style:{textAlign:"left",padding:"8px 12px"}},'指標'),React.createElement('th',{style:{padding:"8px 12px",color:C.cyan}},'訓練集'),React.createElement('th',{style:{padding:"8px 12px",color:C.amber}},'測試集'),React.createElement('th',{style:{padding:"8px 12px",fontSize:10,color:C.dim}},'說明'))),React.createElement('tbody',null,([
+                  React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:18,overflowX:"auto"}},React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:12}},React.createElement('thead',null,React.createElement('tr',{style:{color:C.dim,borderBottom:"2px solid "+(C.border)}},React.createElement('th',{style:{textAlign:"left",padding:"8px 12px"}},'指標'),React.createElement('th',{style:{padding:"8px 12px",color:C.cyan}},'訓練集'),React.createElement('th',{style:{padding:"8px 12px",color:C.amber}},'測試集'),React.createElement('th',{style:{padding:"8px 12px",fontSize:10,color:C.dim}},'說明'))),React.createElement('tbody',null,([
                         {k:"r2",l:"R² 決定係數",d:"解釋方差比例，越接近 1 越好",g:v=>v>0.85?C.green:v>0.5?C.amber:C.red},
                         {k:"adjR2",l:"Adjusted R²",d:"修正自由度後的 R²",g:v=>v>0.85?C.green:v>0.5?C.amber:C.red},
                         {k:"mae",l:"MAE 平均絕對誤差",d:"預測誤差的平均絕對值"},
@@ -1404,25 +1453,25 @@ function App(){
                       ].map(({k,l,d,g,unit})=>{
                         const tv=result.trainM?.[k],tsv=result.testM?.[k];
                         return(
-                          React.createElement('tr',{key:k,style:{borderBottom:`1px solid ${C.border}22`}},React.createElement('td',{style:{padding:"9px 12px",fontWeight:600,fontSize:12}},(l)),React.createElement('td',{style:{padding:"9px 12px",textAlign:"center",fontFamily:"monospace",color:g?g(tv):C.cyan}},(fmt(tv,4)),(unit)),React.createElement('td',{style:{padding:"9px 12px",textAlign:"center",fontFamily:"monospace",color:g?g(tsv):C.amber}},(tsv!=null?`${fmt(tsv,4)}${unit??""}`:"—")),React.createElement('td',{style:{padding:"9px 12px",fontSize:10,color:C.dim}},(d)))
+                          React.createElement('tr',{key:k,style:{borderBottom:"1px solid "+C.border+"22"}},React.createElement('td',{style:{padding:"9px 12px",fontWeight:600,fontSize:12}},(l)),React.createElement('td',{style:{padding:"9px 12px",textAlign:"center",fontFamily:"monospace",color:g?g(tv):C.cyan}},(fmt(tv,4)),(unit)),React.createElement('td',{style:{padding:"9px 12px",textAlign:"center",fontFamily:"monospace",color:g?g(tsv):C.amber}},(tsv!=null?(fmt(tsv,4))+(unit??""):"—")),React.createElement('td',{style:{padding:"9px 12px",fontSize:10,color:C.dim}},(d)))
                         );
                       })))))
                 )),(tab==="predictions"&&predData&&(
-                  React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:14}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'Actual vs Predicted',(predData.sampled&&React.createElement('span',{style:{color:C.dim,fontSize:9}},'(sampled to 350 pts)'))),React.createElement(ResponsiveContainer,{width:'100%',height:260},React.createElement(ScatterChart,{margin:{top:10,right:20,bottom:24,left:10}},React.createElement(CartesianGrid,{stroke:'#1a2d3a',strokeDasharray:'3 3'}),React.createElement(XAxis,{dataKey:'x',type:'number',name:'Actual',domain:["auto","auto"],tick:{fill:C.dim,fontSize:10,fontFamily:"monospace"},axisLine:{stroke:C.border},tickLine:false,label:{value:"Actual",position:"insideBottom",offset:-12,fill:C.amber,fontSize:11}}),React.createElement(YAxis,{dataKey:'y',type:'number',name:'Predicted',domain:["auto","auto"],tick:{fill:C.dim,fontSize:10,fontFamily:"monospace"},axisLine:{stroke:C.border},tickLine:false,label:{value:"Predicted",angle:-90,position:"insideLeft",fill:C.cyan,fontSize:11}}),React.createElement(Tooltip,{cursor:{strokeDasharray:"3 3"},content:({active,payload})=>{
+                  React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:14}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'Actual vs Predicted',(predData.sampled&&React.createElement('span',{style:{color:C.dim,fontSize:9}},'(sampled to 350 pts)'))),React.createElement(ResponsiveContainer,{width:'100%',height:260},React.createElement(ScatterChart,{margin:{top:10,right:20,bottom:24,left:10}},React.createElement(CartesianGrid,{stroke:'#1a2d3a',strokeDasharray:'3 3'}),React.createElement(XAxis,{dataKey:'x',type:'number',name:'Actual',domain:["auto","auto"],tick:{fill:C.dim,fontSize:10,fontFamily:"monospace"},axisLine:{stroke:C.border},tickLine:false,label:{value:"Actual",position:"insideBottom",offset:-12,fill:C.amber,fontSize:11}}),React.createElement(YAxis,{dataKey:'y',type:'number',name:'Predicted',domain:["auto","auto"],tick:{fill:C.dim,fontSize:10,fontFamily:"monospace"},axisLine:{stroke:C.border},tickLine:false,label:{value:"Predicted",angle:-90,position:"insideLeft",fill:C.cyan,fontSize:11}}),React.createElement(Tooltip,{cursor:{strokeDasharray:"3 3"},content:({active,payload})=>{
                             if(!active||!payload?.length)return null;
                             const d=payload[0]?.payload;
                             return(
-                              React.createElement('div',{style:{background:"#0a1e2c",border:`1px solid ${C.border}`,borderRadius:6,padding:"7px 11px",fontFamily:"monospace",fontSize:11}},React.createElement('div',{style:{color:C.amber}},'Actual:',(fmt(d?.x,3))),React.createElement('div',{style:{color:C.cyan}},'Pred:',(fmt(d?.y,3))))
+                              React.createElement('div',{style:{background:"#0a1e2c",border:"1px solid "+(C.border),borderRadius:6,padding:"7px 11px",fontFamily:"monospace",fontSize:11}},React.createElement('div',{style:{color:C.amber}},'Actual:',(fmt(d?.x,3))),React.createElement('div',{style:{color:C.cyan}},'Pred:',(fmt(d?.y,3))))
                             );
-                          }}),React.createElement(Legend,{wrapperStyle:{fontSize:10,color:C.dim,paddingTop:10}}),React.createElement(Scatter,{name:'Train',data:predData.trainPts,fill:C.cyan,opacity:0.6,r:3}),(predData.testPts.length>0&&React.createElement(Scatter,{name:'Test',data:predData.testPts,fill:C.amber,opacity:0.85,r:3})),React.createElement(Scatter,{name:'Perfect fit',data:[{x:predData.minA,y:predData.minA},{x:predData.maxA,y:predData.maxA}],line:{stroke:"#ffffff35",strokeWidth:1.5,strokeDasharray:"6 3"},shape:()=>null,legendType:'none'})))),React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:14}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'殘差分布（Residuals）'),React.createElement(ResponsiveContainer,{width:'100%',height:190},React.createElement(BarChart,{data:predData.residData,margin:{top:5,right:20,bottom:20,left:10},barCategoryGap:'10%'},React.createElement(CartesianGrid,{stroke:'#1a2d3a',strokeDasharray:'3 3'}),React.createElement(XAxis,{dataKey:'idx',tick:{fill:C.dim,fontSize:9},axisLine:{stroke:C.border},tickLine:false,label:{value:"Sample Index",position:"insideBottom",offset:-8,fill:C.dim,fontSize:10}}),React.createElement(YAxis,{tick:{fill:C.dim,fontSize:10,fontFamily:"monospace"},axisLine:{stroke:C.border},tickLine:false}),React.createElement(Tooltip,{formatter:v=>[fmt(v,4),"Residual"],contentStyle:{background:"#0a1e2c",border:`1px solid ${C.border}`,fontSize:11,fontFamily:"monospace"}}),React.createElement(ReferenceLine,{y:0,stroke:'#ffffff40',strokeDasharray:'4 2'}),React.createElement(Bar,{dataKey:'res',name:'Residual',fill:C.purple,opacity:0.75,radius:[2,2,0,0]})))))
+                          }}),React.createElement(Legend,{wrapperStyle:{fontSize:10,color:C.dim,paddingTop:10}}),React.createElement(Scatter,{name:'Train',data:predData.trainPts,fill:C.cyan,opacity:0.6,r:3}),(predData.testPts.length>0&&React.createElement(Scatter,{name:'Test',data:predData.testPts,fill:C.amber,opacity:0.85,r:3})),React.createElement(Scatter,{name:'Perfect fit',data:[{x:predData.minA,y:predData.minA},{x:predData.maxA,y:predData.maxA}],line:{stroke:"#ffffff35",strokeWidth:1.5,strokeDasharray:"6 3"},shape:()=>null,legendType:'none'})))),React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:14}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'殘差分布（Residuals）'),React.createElement(ResponsiveContainer,{width:'100%',height:190},React.createElement(BarChart,{data:predData.residData,margin:{top:5,right:20,bottom:20,left:10},barCategoryGap:'10%'},React.createElement(CartesianGrid,{stroke:'#1a2d3a',strokeDasharray:'3 3'}),React.createElement(XAxis,{dataKey:'idx',tick:{fill:C.dim,fontSize:9},axisLine:{stroke:C.border},tickLine:false,label:{value:"Sample Index",position:"insideBottom",offset:-8,fill:C.dim,fontSize:10}}),React.createElement(YAxis,{tick:{fill:C.dim,fontSize:10,fontFamily:"monospace"},axisLine:{stroke:C.border},tickLine:false}),React.createElement(Tooltip,{formatter:v=>[fmt(v,4),"Residual"],contentStyle:{background:"#0a1e2c",border:"1px solid "+(C.border),fontSize:11,fontFamily:"monospace"}}),React.createElement(ReferenceLine,{y:0,stroke:'#ffffff40',strokeDasharray:'4 2'}),React.createElement(Bar,{dataKey:'res',name:'Residual',fill:C.purple,opacity:0.75,radius:[2,2,0,0]})))))
                 )),(tab==="sensitivity"&&(
                   React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},(result.importance&&(
-                      React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:14}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'特徵重要性'),React.createElement(ResponsiveContainer,{width:'100%',height:Math.max(100,result.importance.length*38)},React.createElement(BarChart,{data:[...result.importance].sort((a,b)=>b.value-a.value),layout:'vertical',margin:{top:0,right:60,bottom:0,left:10}},React.createElement(CartesianGrid,{stroke:'#1a2d3a',strokeDasharray:'3 3',horizontal:false}),React.createElement(XAxis,{type:'number',domain:[0,1],tick:{fill:C.dim,fontSize:10},axisLine:{stroke:C.border},tickLine:false,tickFormatter:v=>`${(v*100).toFixed(0)}%`}),React.createElement(YAxis,{type:'category',dataKey:'name',tick:{fill:C.text,fontSize:11},axisLine:false,tickLine:false,width:110}),React.createElement(Tooltip,{formatter:v=>`${(v*100).toFixed(1)}%`}),React.createElement(Bar,{dataKey:'value',fill:C.amber,radius:[0,4,4,0],name:'重要性'}))))
+                      React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:14}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'特徵重要性'),React.createElement(ResponsiveContainer,{width:'100%',height:Math.max(100,result.importance.length*38)},React.createElement(BarChart,{data:[...result.importance].sort((a,b)=>b.value-a.value),layout:'vertical',margin:{top:0,right:60,bottom:0,left:10}},React.createElement(CartesianGrid,{stroke:'#1a2d3a',strokeDasharray:'3 3',horizontal:false}),React.createElement(XAxis,{type:'number',domain:[0,1],tick:{fill:C.dim,fontSize:10},axisLine:{stroke:C.border},tickLine:false,tickFormatter:v=>(v*100).toFixed(0)+"%"}),React.createElement(YAxis,{type:'category',dataKey:'name',tick:{fill:C.text,fontSize:11},axisLine:false,tickLine:false,width:110}),React.createElement(Tooltip,{formatter:v=>(v*100).toFixed(1)+"%"}),React.createElement(Bar,{dataKey:'value',fill:C.amber,radius:[0,4,4,0],name:'重要性'}))))
                     )),(sensitivity&&(
-                      React.createElement(React.Fragment,null,React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:14}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:4}},'Tornado Chart（±50% 擾動）'),React.createElement('div',{style:{fontSize:10,color:C.dim,marginBottom:10}},'特徵值 ±50% 時，預測 Y 的最大變化幅度'),React.createElement(ResponsiveContainer,{width:'100%',height:Math.max(100,sensitivity.length*34)},React.createElement(BarChart,{data:sensitivity.map(s=>({name:s.feature,neg:s.rows[0]?.delta??0,pos:s.rows[s.rows.length-1]?.delta??0,si:s.si})),layout:'vertical',margin:{top:0,right:70,bottom:0,left:10}},React.createElement(CartesianGrid,{stroke:'#1a2d3a',strokeDasharray:'3 3',horizontal:false}),React.createElement(XAxis,{type:'number',tick:{fill:C.dim,fontSize:10},axisLine:{stroke:C.border},tickLine:false,tickFormatter:v=>`${v.toFixed(1)}%`}),React.createElement(YAxis,{type:'category',dataKey:'name',tick:{fill:C.text,fontSize:11},axisLine:false,tickLine:false,width:110}),React.createElement(Tooltip,{formatter:(v,n)=>[`${v.toFixed(2)}%`,n]}),React.createElement(ReferenceLine,{x:0,stroke:'#ffffff30'}),React.createElement(Bar,{dataKey:'pos',name:'+50% 擾動',fill:C.cyan,radius:[0,4,4,0]}),React.createElement(Bar,{dataKey:'neg',name:'-50% 擾動',fill:C.red,radius:[4,0,0,4]})))),React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:14,overflowX:"auto"}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'OAT 詳細擾動表（Y 預測值變化 %）'),React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace"}},React.createElement('thead',null,React.createElement('tr',{style:{color:C.dim,borderBottom:`1px solid ${C.border}`}},React.createElement('th',{style:{textAlign:"left",padding:"5px 8px",fontFamily:"Syne"}},'特徵'),React.createElement('th',{style:{padding:"5px 8px"}},'均值'),([-50,-25,-10,0,10,25,50].map(p=>(
+                      React.createElement(React.Fragment,null,React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:14}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:4}},'Tornado Chart（±50% 擾動）'),React.createElement('div',{style:{fontSize:10,color:C.dim,marginBottom:10}},'特徵值 ±50% 時，預測 Y 的最大變化幅度'),React.createElement(ResponsiveContainer,{width:'100%',height:Math.max(100,sensitivity.length*34)},React.createElement(BarChart,{data:sensitivity.map(s=>({name:s.feature,neg:s.rows[0]?.delta??0,pos:s.rows[s.rows.length-1]?.delta??0,si:s.si})),layout:'vertical',margin:{top:0,right:70,bottom:0,left:10}},React.createElement(CartesianGrid,{stroke:'#1a2d3a',strokeDasharray:'3 3',horizontal:false}),React.createElement(XAxis,{type:'number',tick:{fill:C.dim,fontSize:10},axisLine:{stroke:C.border},tickLine:false,tickFormatter:v=>v.toFixed(1)+"%"}),React.createElement(YAxis,{type:'category',dataKey:'name',tick:{fill:C.text,fontSize:11},axisLine:false,tickLine:false,width:110}),React.createElement(Tooltip,{formatter:(v,n)=>[v.toFixed(2)+"%",n]}),React.createElement(ReferenceLine,{x:0,stroke:'#ffffff30'}),React.createElement(Bar,{dataKey:'pos',name:'+50% 擾動',fill:C.cyan,radius:[0,4,4,0]}),React.createElement(Bar,{dataKey:'neg',name:'-50% 擾動',fill:C.red,radius:[4,0,0,4]})))),React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:14,overflowX:"auto"}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'OAT 詳細擾動表（Y 預測值變化 %）'),React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace"}},React.createElement('thead',null,React.createElement('tr',{style:{color:C.dim,borderBottom:"1px solid "+(C.border)}},React.createElement('th',{style:{textAlign:"left",padding:"5px 8px",fontFamily:"Syne"}},'特徵'),React.createElement('th',{style:{padding:"5px 8px"}},'均值'),([-50,-25,-10,0,10,25,50].map(p=>(
                                 React.createElement('th',{key:p,style:{padding:"5px 7px",color:p<0?C.red:p>0?C.cyan:C.dim}},(p>0?"+":""),(p),'%')
                               ))),React.createElement('th',{style:{padding:"5px 8px",color:C.amber}},'敏感度'))),React.createElement('tbody',null,(sensitivity.map(s=>(
-                              React.createElement('tr',{key:s.feature,style:{borderBottom:`1px solid ${C.border}22`}},React.createElement('td',{style:{padding:"5px 8px",color:C.text,fontFamily:"Syne",fontSize:11}},(s.feature)),React.createElement('td',{style:{padding:"5px 8px",textAlign:"center",color:C.dim}},(fmt(s.mean,2))),(s.rows.map(r=>(
+                              React.createElement('tr',{key:s.feature,style:{borderBottom:"1px solid "+C.border+"22"}},React.createElement('td',{style:{padding:"5px 8px",color:C.text,fontFamily:"Syne",fontSize:11}},(s.feature)),React.createElement('td',{style:{padding:"5px 8px",textAlign:"center",color:C.dim}},(fmt(s.mean,2))),(s.rows.map(r=>(
                                   React.createElement('td',{key:r.pct,style:{padding:"5px 7px",textAlign:"center",color:r.pct===0?C.dim:r.delta>0?C.cyan:C.red}},(r.pct===0?"—":fmtP(r.delta)))
                                 ))),React.createElement('td',{style:{padding:"5px 8px",textAlign:"center",fontWeight:700,color:C.amber}},(s.si.toFixed(1)),'%'))
                             )))))))
@@ -1430,11 +1479,11 @@ function App(){
                 )))
             ))))
         )),(mode==="predict"&&(
-          React.createElement('div',{style:{display:"grid",gridTemplateColumns:"320px 1fr",gap:18,alignItems:"start"}},React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:18}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},'匯入 Emulator PKL'),React.createElement(DropZone,{label:'拖曳 .pkl 檔案至此',file:pklFile,onFile:onPklFile,accent:C.purple}),(pklError&&React.createElement('div',{style:{marginTop:10,fontSize:11,color:C.red,background:"#1a0808",border:`1px solid ${C.red}33`,borderRadius:6,padding:"8px 12px"}},'❌',(pklError)))),(pklModel&&(
-                React.createElement('div',{style:{background:C.card,border:`1px solid ${C.purple}44`,borderRadius:12,padding:18}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:14}},'模型資訊'),React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:9}},([
-                      ["演算法",`${ALGOS[pklModel.algorithm]?.icon??'🤖'} ${pklModel.metadata?.algorithm_label??pklModel.algorithm}`,C.purple],
+          React.createElement('div',{style:{display:"grid",gridTemplateColumns:"320px 1fr",gap:18,alignItems:"start"}},React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:18}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},'匯入 Emulator PKL'),React.createElement(DropZone,{label:'拖曳 .pkl 檔案至此',file:pklFile,onFile:onPklFile,accent:C.purple}),(pklError&&React.createElement('div',{style:{marginTop:10,fontSize:11,color:C.red,background:"#1a0808",border:"1px solid "+C.red+"33",borderRadius:6,padding:"8px 12px"}},'❌',(pklError)))),(pklModel&&(
+                React.createElement('div',{style:{background:C.card,border:"1px solid "+C.purple+"44",borderRadius:12,padding:18}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:14}},'模型資訊'),React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:9}},([
+                      ["演算法",(ALGOS[pklModel.algorithm]?.icon??"🤖")+" "+(pklModel.metadata?.algorithm_label??pklModel.algorithm),C.purple],
                       ["目標變數",pklModel.target_name,C.amber],
-                      ["特徵數量",`${pklModel.feature_names?.length} 個`,C.cyan],
+                      ["特徵數量",(pklModel.feature_names?.length)+" 個",C.cyan],
                       ["Train R²",pklModel.metadata?.train_metrics?.r2!=null?fmt(pklModel.metadata.train_metrics.r2):"—",C.green],
                       ["Test R²",pklModel.metadata?.test_metrics?.r2!=null?fmt(pklModel.metadata.test_metrics.r2):"—",C.cyan],
                       ["建立時間",(pklModel.metadata?.created_at??'').slice(0,10)||"—",C.dim],
@@ -1442,23 +1491,23 @@ function App(){
                       React.createElement('div',{key:k,style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}},React.createElement('span',{style:{fontSize:11,color:C.dim}},(k)),React.createElement('span',{style:{fontSize:12,fontWeight:700,color:c,fontFamily:"monospace"}},(v)))
                     )))))
               )),(pklModel&&(
-                React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:18}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:8}},'批量預測'),React.createElement('div',{style:{fontSize:11,color:C.dim,marginBottom:10}},'上傳含特徵欄位的 Excel / CSV，系統自動為每列計算預測值。'),React.createElement(DropZone,{label:`上傳批量資料 (.xlsx/.csv)\n需含欄位：${pklModel.feature_names.join(', ')}`,file:batchFile,onFile:onBatchFile,accent:C.green}),(batchResults.length>0&&(
-                    React.createElement('div',{style:{marginTop:10}},React.createElement('div',{style:{fontSize:11,color:C.green,marginBottom:8}},'✓ 已預測',(batchResults.length),'筆'),React.createElement('button',{onClick:downloadBatch,style:{width:"100%",padding:"9px",borderRadius:7,border:`1px solid ${C.green}`,background:`${C.green}18`,color:C.green,fontSize:12,fontWeight:700,cursor:"pointer"}},'⬇ 下載結果 Excel'),React.createElement('div',{style:{marginTop:10,maxHeight:180,overflowY:"auto",background:"#0a1820",borderRadius:6,padding:8}},React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:10,fontFamily:"monospace"}},React.createElement('thead',null,React.createElement('tr',{style:{color:C.dim,borderBottom:`1px solid ${C.border}`}},(Object.keys(batchResults[0]).map(k=>React.createElement('th',{key:k,style:{padding:"3px 6px",textAlign:"right",whiteSpace:"nowrap"}},(k)))))),React.createElement('tbody',null,(batchResults.slice(0,8).map((row,i)=>(
-                            React.createElement('tr',{key:i,style:{borderBottom:`1px solid ${C.border}22`}},(Object.entries(row).map(([k,v])=>(
+                React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:18}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:8}},'批量預測'),React.createElement('div',{style:{fontSize:11,color:C.dim,marginBottom:10}},'上傳含特徵欄位的 Excel / CSV，系統自動為每列計算預測值。'),React.createElement(DropZone,{label:'上傳批量資料 (.xlsx/.csv)\\n需含欄位：'+(pklModel.feature_names.join(", ")),file:batchFile,onFile:onBatchFile,accent:C.green}),(batchResults.length>0&&(
+                    React.createElement('div',{style:{marginTop:10}},React.createElement('div',{style:{fontSize:11,color:C.green,marginBottom:8}},'✓ 已預測',(batchResults.length),'筆'),React.createElement('button',{onClick:downloadBatch,style:{width:"100%",padding:"9px",borderRadius:7,border:"1px solid "+(C.green),background:C.green+"18",color:C.green,fontSize:12,fontWeight:700,cursor:"pointer"}},'⬇ 下載結果 Excel'),React.createElement('div',{style:{marginTop:10,maxHeight:180,overflowY:"auto",background:"#0a1820",borderRadius:6,padding:8}},React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:10,fontFamily:"monospace"}},React.createElement('thead',null,React.createElement('tr',{style:{color:C.dim,borderBottom:"1px solid "+(C.border)}},(Object.keys(batchResults[0]).map(k=>React.createElement('th',{key:k,style:{padding:"3px 6px",textAlign:"right",whiteSpace:"nowrap"}},(k)))))),React.createElement('tbody',null,(batchResults.slice(0,8).map((row,i)=>(
+                            React.createElement('tr',{key:i,style:{borderBottom:"1px solid "+C.border+"22"}},(Object.entries(row).map(([k,v])=>(
                                 React.createElement('td',{key:k,style:{padding:"3px 6px",textAlign:"right",color:k.endsWith('_pred')?C.green:C.text}},(v))
                               ))))
                           ))))),(batchResults.length>8&&React.createElement('div',{style:{textAlign:"center",color:C.dim,fontSize:10,padding:4}},'… 還有',(batchResults.length-8),'筆'))))
                   )))
               ))),React.createElement('div',null,(!pklModel&&(
-                React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:60,textAlign:"center",color:C.dim}},React.createElement('div',{style:{fontSize:52,marginBottom:16,opacity:.3}},'🎯'),React.createElement('div',{style:{fontSize:14}},'請先在左側匯入 Emulator .pkl 檔案'),React.createElement('div',{style:{fontSize:11,marginTop:8,color:C.dim}},'可在「建模分析」分頁訓練模型後下載 .pkl'))
+                React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:60,textAlign:"center",color:C.dim}},React.createElement('div',{style:{fontSize:52,marginBottom:16,opacity:.3}},'🎯'),React.createElement('div',{style:{fontSize:14}},'請先在左側匯入 Emulator .pkl 檔案'),React.createElement('div',{style:{fontSize:11,marginTop:8,color:C.dim}},'可在「建模分析」分頁訓練模型後下載 .pkl'))
               )),(pklModel&&(
-                React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:16}},'手動輸入特徵值 → 預測',React.createElement('span',{style:{color:C.amber}},(pklModel.target_name))),React.createElement('div',{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12,marginBottom:16}},(pklModel.feature_names.map(fn=>(
-                        React.createElement('div',{key:fn},React.createElement('label',{style:{fontSize:11,color:C.dim,display:"block",marginBottom:4,letterSpacing:0.5}},(fn)),React.createElement('input',{type:'number',value:inputVals[fn]??'',onChange:e=>setInputVals(p=>({...p,[fn]:e.target.value})),placeholder:'輸入數值…',style:{width:"100%",boxSizing:"border-box",background:"#0a1820",border:`1px solid ${C.border}`,
+                React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:20}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:16}},'手動輸入特徵值 → 預測',React.createElement('span',{style:{color:C.amber}},(pklModel.target_name))),React.createElement('div',{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12,marginBottom:16}},(pklModel.feature_names.map(fn=>(
+                        React.createElement('div',{key:fn},React.createElement('label',{style:{fontSize:11,color:C.dim,display:"block",marginBottom:4,letterSpacing:0.5}},(fn)),React.createElement('input',{type:'number',value:inputVals[fn]??'',onChange:e=>setInputVals(p=>({...p,[fn]:e.target.value})),placeholder:'輸入數值…',style:{width:"100%",boxSizing:"border-box",background:"#0a1820",border:"1px solid "+(C.border),
                               borderRadius:6,padding:"9px 12px",color:C.text,fontSize:13,fontFamily:"monospace",outline:"none"}}))
                       )))),React.createElement('button',{onClick:runSinglePred,style:{width:"100%",padding:"13px",borderRadius:8,border:"none",background:C.purple,color:"#fff",fontSize:14,fontWeight:800,cursor:"pointer",letterSpacing:0.5}},'▶ 計算預測值'),(predError&&React.createElement('div',{style:{marginTop:10,fontSize:11,color:C.red}},'⚠',(predError)))),(prediction!=null&&(
-                    React.createElement('div',{style:{background:`linear-gradient(135deg,#0f1a2e,#1a0f2e)`,border:`1.5px solid ${C.purple}`,borderRadius:12,padding:"28px 24px",textAlign:"center"}},React.createElement('div',{style:{fontSize:11,letterSpacing:3,color:C.purple,textTransform:"uppercase",marginBottom:8}},'預測結果'),React.createElement('div',{style:{fontSize:13,color:C.dim,marginBottom:4}},(pklModel.target_name)),React.createElement('div',{style:{fontSize:52,fontWeight:800,color:"#e8f4ff",fontFamily:"monospace",letterSpacing:-2,lineHeight:1}},(prediction.toFixed(4))),React.createElement('div',{style:{marginTop:12,display:"flex",justifyContent:"center",gap:24,fontSize:11,color:C.dim}},React.createElement('span',null,'演算法',React.createElement('span',{style:{color:C.purple}},(ALGOS[pklModel.algorithm]?.label??pklModel.algorithm))),React.createElement('span',null,'特徵數',React.createElement('span',{style:{color:C.cyan}},(pklModel.feature_names.length)))))
+                    React.createElement('div',{style:{background:`linear-gradient(135deg,#0f1a2e,#1a0f2e)`,border:"1.5px solid "+(C.purple),borderRadius:12,padding:"28px 24px",textAlign:"center"}},React.createElement('div',{style:{fontSize:11,letterSpacing:3,color:C.purple,textTransform:"uppercase",marginBottom:8}},'預測結果'),React.createElement('div',{style:{fontSize:13,color:C.dim,marginBottom:4}},(pklModel.target_name)),React.createElement('div',{style:{fontSize:52,fontWeight:800,color:"#e8f4ff",fontFamily:"monospace",letterSpacing:-2,lineHeight:1}},(prediction.toFixed(4))),React.createElement('div',{style:{marginTop:12,display:"flex",justifyContent:"center",gap:24,fontSize:11,color:C.dim}},React.createElement('span',null,'演算法',React.createElement('span',{style:{color:C.purple}},(ALGOS[pklModel.algorithm]?.label??pklModel.algorithm))),React.createElement('span',null,'特徵數',React.createElement('span',{style:{color:C.cyan}},(pklModel.feature_names.length)))))
                   )),(pklModel.metadata?.train_metrics&&(
-                    React.createElement('div',{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:16}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},'模型訓練指標參考'),React.createElement('div',{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:9}},([["Train R²",pklModel.metadata.train_metrics.r2,C.cyan],
+                    React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:16}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},'模型訓練指標參考'),React.createElement('div',{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:9}},([["Train R²",pklModel.metadata.train_metrics.r2,C.cyan],
                           ["Test R²",pklModel.metadata.test_metrics?.r2,C.amber],
                           ["Train RMSE",pklModel.metadata.train_metrics.rmse,C.text],
                           ["Test RMSE",pklModel.metadata.test_metrics?.rmse,C.text],
@@ -1471,26 +1520,42 @@ function App(){
               ))))
         )),(mode==="doe"&&(
           React.createElement(DoePage,{factors:doeFactors,setFactors:setDoeFactors,method:doeMethod,setMethod:setDoeMethod,n:doeN,setN:setDoeN,center:doeCenter,setCenter:setDoeCenter,levels:doeLevels,setLevels:setDoeLevels,alpha:doeAlpha,setAlpha:setDoeAlpha,table:doeTable,setTable:setDoeTable,err:doeError,setErr:setDoeError})
+        )),(mode==="adjr2"&&(
+          React.createElement('div',{style:{maxWidth:680,margin:"0 auto",display:"flex",flexDirection:"column",gap:16}},React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:18}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},'① 上傳資料'),React.createElement(DropZone,{label:'拖曳 Excel / CSV（需含實際值與預測值兩欄）',file:adjFile,onFile:onAdjFile,accent:C.cyan}),(adjRows.length>0&&(
+                React.createElement('div',{style:{marginTop:8,fontSize:11,fontFamily:"monospace",color:C.dim}},("✓ "),React.createElement('span',{style:{color:C.cyan}},(adjRows.length)),(" 筆資料，"),React.createElement('span',{style:{color:C.amber}},(adjHeaders.length)),(" 欄"))
+              ))),(adjHeaders.length>0&&(
+              React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:18}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:14}},'② 欄位設定'),React.createElement('div',{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,marginBottom:14}},React.createElement('div',null,React.createElement('label',{style:{fontSize:11,color:C.dim,display:"block",marginBottom:6}},'實際值 Y（Actual）'),React.createElement('select',{value:adjActual,onChange:e=>setAdjActual(e.target.value),style:{width:"100%",background:"#0a1820",border:"1px solid "+C.cyan+"44",borderRadius:6,padding:"8px 10px",color:C.text,fontSize:13,outline:"none"}},(adjHeaders.map(h=>React.createElement('option',{key:h},(h)))))),React.createElement('div',null,React.createElement('label',{style:{fontSize:11,color:C.dim,display:"block",marginBottom:6}},'預測值 Ŷ（Predicted）'),React.createElement('select',{value:adjPred,onChange:e=>setAdjPred(e.target.value),style:{width:"100%",background:"#0a1820",border:"1px solid "+C.amber+"44",borderRadius:6,padding:"8px 10px",color:C.text,fontSize:13,outline:"none"}},(adjHeaders.map(h=>React.createElement('option',{key:h},(h))))))),React.createElement('div',null,React.createElement('label',{style:{fontSize:11,color:C.dim,display:"block",marginBottom:6}},("Factor（自變數）數量 p = "),React.createElement('span',{style:{color:C.purple,fontFamily:"monospace",fontSize:14}},(adjFactors))),React.createElement('div',{style:{display:"flex",alignItems:"center",gap:12}},React.createElement('input',{type:'range',min:1,max:50,value:adjFactors,onChange:e=>setAdjFactors(+e.target.value),style:{flex:1,accentColor:C.purple}}),React.createElement('input',{type:'number',min:1,max:999,value:adjFactors,onChange:e=>setAdjFactors(Math.max(1,+e.target.value)),style:{width:64,background:"#0a1820",border:"1px solid "+C.purple+"44",borderRadius:6,padding:"6px 8px",color:C.text,fontSize:13,fontFamily:"monospace",outline:"none",textAlign:"center"}})),React.createElement('div',{style:{fontSize:10,color:C.dim,marginTop:4}},("Adj R² = 1 − (1 − R²) × (n − 1) / (n − p − 1)，其中 n = 樣本數"))))
+            )),(adjHeaders.length>0&&(
+              React.createElement('button',{onClick:calcAdjR2,style:{padding:"13px",borderRadius:10,border:"none",background:C.purple,color:"#fff",fontSize:14,fontWeight:800,cursor:"pointer"}},'▶ 計算 Adjusted R²')
+            )),(adjResult&&(
+              adjResult.error?(
+                React.createElement('div',{style:{padding:"14px 18px",borderRadius:10,background:"#180a0a",border:"1px solid "+C.red+"44",color:C.red,fontSize:13}},("⚠ "+adjResult.error))
+              ):(
+                React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:12}},React.createElement('div',{style:{background:"linear-gradient(135deg,#0f1a2e,#1a0f2e)",border:"2px solid "+C.purple,borderRadius:14,padding:"28px 24px",textAlign:"center"}},React.createElement('div',{style:{fontSize:11,letterSpacing:3,color:C.purple,textTransform:"uppercase",marginBottom:6}},'Adjusted R²'),React.createElement('div',{style:{fontSize:64,fontWeight:800,color:"#e8f4ff",fontFamily:"monospace",letterSpacing:-2,lineHeight:1}},(adjResult.adjR2.toFixed(6))),React.createElement('div',{style:{fontSize:11,color:C.dim,marginTop:10}},(adjResult.adjR2>=0.9?"🟢 優秀":adjResult.adjR2>=0.7?"🟡 良好":adjResult.adjR2>=0.5?"🟠 尚可":"🔴 較差"),(" | n = "+adjResult.n+" | p = "+adjResult.p))),React.createElement('div',{style:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}},([
+                      ["R²",adjResult.r2.toFixed(6),C.cyan,"決定係數"],
+                      ["Adj R²",adjResult.adjR2.toFixed(6),C.purple,"修正決定係數"],
+                      ["MAE",fmt(adjResult.mae),C.green,"平均絕對誤差"],
+                      ["RMSE",fmt(adjResult.rmse),C.amber,"均方根誤差"],
+                      ["n",adjResult.n,C.text,"樣本數"],
+                      ["p",adjResult.p,C.text,"Factor 數"],
+                    ].map(function(item){
+                      var label=item[0],value=item[1],color=item[2],desc=item[3];
+                      return(
+                        React.createElement('div',{key:label,style:{background:C.card,border:"1px solid "+C.border,borderRadius:8,padding:"10px 12px"}},React.createElement('div',{style:{fontSize:9,letterSpacing:1,color:C.dim,textTransform:"uppercase",marginBottom:4}},(label)),React.createElement('div',{style:{fontSize:16,fontWeight:700,color:color,fontFamily:"monospace"}},(value)),React.createElement('div',{style:{fontSize:9,color:C.dim,marginTop:2}},(desc)))
+                      );
+                    }))),React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"14px 16px",fontFamily:"monospace",fontSize:12,color:C.dim,lineHeight:2}},React.createElement('div',{style:{color:C.text,fontWeight:700,marginBottom:6}},'計算過程'),React.createElement('div',null,("SS_res = "+fmt(adjResult.ssRes,6))),React.createElement('div',null,("SS_tot = "+fmt(adjResult.ssTot,6))),React.createElement('div',null,("R² = 1 − SS_res/SS_tot = "+adjResult.r2.toFixed(6))),React.createElement('div',null,("Adj R² = 1 − (1 − "+adjResult.r2.toFixed(4)+") × ("+adjResult.n+" − 1) / ("+adjResult.n+" − "+adjResult.p+" − 1)")),React.createElement('div',{style:{color:C.purple,fontWeight:700}},("      = "+adjResult.adjR2.toFixed(6)))))
+              )
+            )),(!adjFile&&(
+              React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:48,textAlign:"center",color:C.dim}},React.createElement('div',{style:{fontSize:48,marginBottom:12,opacity:.3}},'📐'),React.createElement('div',{style:{fontSize:14}},'上傳含「實際值」與「預測值」兩欄的 Excel 開始計算'))
+            )))
         ))))
   );
 }
 
 
-try {
-  const _root = ReactDOM.createRoot(document.getElementById('root'));
-  _root.render(React.createElement(App));
-} catch(err) {
-  document.getElementById('root').innerHTML = 
-    '<div style="color:#f06464;padding:32px;font-family:monospace;background:#06101a;min-height:100vh">' +
-    '<h2 style="margin-bottom:16px;color:#f08080">JavaScript Error</h2>' +
-    '<pre style="font-size:11px;white-space:pre-wrap;color:#ffa0a0">' + 
-    String(err.stack || err.message || err).replace(/</g,'&lt;') + 
-    '</pre></div>';
-  console.error('App render error:', err);
-}
+const _root = ReactDOM.createRoot(document.getElementById('root'));
+_root.render(React.createElement(App));
 
-  const _root = ReactDOM.createRoot(document.getElementById('root'));
-  _root.render(React.createElement(App));
 }
 initApp();
   </script>
