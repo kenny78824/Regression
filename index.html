@@ -300,14 +300,15 @@ function runAlgo(name,Xtrain,ytrain,Xtest,ytest,fNames){
       tP=Xtrain.map(r=>predDT(tree,r));tsP=Xtest?.length?Xtest.map(r=>predDT(tree,r)):[];
       importance=fNames.map((fn,j)=>({name:fn,value:dtImp(tree,p,Xtrain.length)[j]}));
       modelInfo={maxDepth:5,tree};
-    } else if(name==="rf"){
-      const trees=buildRF(Xtrain,ytrain,20,4,3);
+    } else if(name==="rf"||name==="rf_light"){
+      const nT=name==="rf_light"?10:20;
+      const trees=buildRF(Xtrain,ytrain,nT,4,3);
       tP=Xtrain.map(r=>predRF(trees,r));tsP=Xtest?.length?Xtest.map(r=>predRF(trees,r)):[];
       const allI=trees.map(t=>dtImp(t,p,Xtrain.length));
       const avgI=fNames.map((_,j)=>avg(allI.map(im=>im[j])));
       const s=avgI.reduce((a,v)=>a+v,0)||1;
       importance=fNames.map((fn,j)=>({name:fn,value:avgI[j]/s}));
-      modelInfo={nTrees:20,trees};
+      modelInfo={nTrees:nT,trees};
     } else if(name==="xgb"){
       const xgbModel=buildXGB(Xtrain,ytrain,100,0.1,4,1.0);
       tP=predXGB(xgbModel,Xtrain);
@@ -1744,14 +1745,15 @@ function App(){
           if(n<4){throw new Error('LOOCV 需要至少4筆有效資料');}
           // Helper: run LOOCV for one algorithm
           const runLoocvOne=(algoName)=>{
-            const capN=algoName==="gpr"?Math.min(n,80):Math.min(n,500);
+            const capN=algoName==="gpr"?Math.min(n,80):algoName==="rf"?Math.min(n,300):Math.min(n,500);
             const isSubset=capN<n;
             const idxArr=isSubset?Array.from({length:n},(_,i)=>i).sort(()=>Math.random()-0.5).slice(0,capN):Array.from({length:n},(_,i)=>i);
             const preds=[];
             for(let k=0;k<idxArr.length;k++){
               const i=idxArr[k];
               try{
-                const r=runAlgo(algoName,cX.filter((_,j)=>j!==i),cY.filter((_,j)=>j!==i),[cX[i]],[cY[i]],xCols);
+                // Use lighter RF (10 trees) in LOOCV to avoid hang
+                const rAlgo=algoName==="rf"?"rf_light":algoName;                const r=runAlgo(rAlgo,cX.filter((_,j)=>j!==i),cY.filter((_,j)=>j!==i),[cX[i]],[cY[i]],xCols);
                 const pred=r?.testPred?.[0];
                 if(typeof pred==="number"&&isFinite(pred)) preds.push({actual:cY[i],pred});
               }catch(_e){}
@@ -1773,7 +1775,7 @@ function App(){
           };
           if(algo==="best"){
             // Run LOOCV for ALL algorithms, compare LOOCV R²
-            const allNames=["linear","poly2","poly3","ridge","lasso","elasticnet","dt","rf","xgb"];
+            const allNames=["linear","poly2","poly3","ridge","lasso","elasticnet","dt","rf"];
             const allRes=allNames.map(nm=>runLoocvOne(nm)).filter(Boolean);
             if(!allRes.length){throw new Error('所有演算法 LOOCV 均失敗');}
             allRes.sort((a,b)=>((b.testM?.r2)??-Infinity)-((a.testM?.r2)??-Infinity));
@@ -2039,7 +2041,7 @@ function App(){
                       ))))
                   )))
               ):testMode==="loocv"?(
-                React.createElement('div',{style:{background:"#0a1820",border:"1px solid "+C.cyan+"33",borderRadius:8,padding:"10px 12px",fontSize:11,color:C.dim,lineHeight:1.6}},React.createElement('div',{style:{color:C.cyan,fontWeight:700,marginBottom:4}},("Leave-One-Out Cross-Validation")),React.createElement('div',null,("每次留一筆做測試、其餘全部訓練，重複 n 次取平均，不需要額外測試資料。")),React.createElement('div',{style:{marginTop:4,color:C.dim,fontSize:10}},("注意：GPR / RF 超過 100/500 筆時自動採樣以控制計算時間。")))
+                React.createElement('div',{style:{background:"#0a1820",border:"1px solid "+C.cyan+"33",borderRadius:8,padding:"10px 12px",fontSize:11,color:C.dim,lineHeight:1.6}},React.createElement('div',{style:{color:C.cyan,fontWeight:700,marginBottom:4}},("Leave-One-Out Cross-Validation")),React.createElement('div',null,("每次留一筆做測試、其餘全部訓練，重複 n 次取平均，不需要額外測試資料。")),React.createElement('div',{style:{marginTop:4,color:C.dim,fontSize:10}},("注意：GPR / RF 超過 100/500 筆時自動採樣。XGBoost 計算量過大，LOOCV 模式下不列入最佳演算法比較。")))
               ):(
                 React.createElement(React.Fragment,null,React.createElement(DropZone,{label:'測試資料',file:testFile,onFile:onTestFile,accent:C.amber}),(testRows.length>0&&(
                   React.createElement('div',{style:{marginTop:6,fontSize:11,fontFamily:"monospace",color:C.dim}},("✓ 已載入 "),React.createElement('span',{style:{color:C.amber}},(testRows.length)),(" 筆測試資料"),(headers.length>0&&yCol&&Object.keys(testRows[0]||{}).includes(yCol)&&(
