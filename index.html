@@ -1148,7 +1148,59 @@ function App(){
         const ok=allX.map((x,i)=>x.every(v=>!isNaN(v))&&!isNaN(allY[i]));
         const cX=allX.filter((_,i)=>ok[i]),cY=allY.filter((_,i)=>ok[i]);
         let Xtr,ytr,Xts=[],yts=[];
-        if(testMode==="upload"&&testRows.length){
+        if(testMode==="loocv"){
+          const n=cX.length;
+          if(n<4){throw new Error('LOOCV 需要至少 4 筆有效資料');}
+          // Resolve "best" algo: do a quick split to find the winner first
+          let loocvAlgo=algo;
+          if(algo==="best"){
+            const si=Math.floor(n*0.8);
+            const qNames=["linear","poly2","ridge","lasso","dt","rf"];
+            const qAll=qNames.map(nm=>runAlgo(nm,cX.slice(0,si),cY.slice(0,si),cX.slice(si),cY.slice(si),xCols)).filter(Boolean);
+            if(qAll.length){
+              qAll.sort((a,b)=>((b.testM??b.trainM)?.r2??-Infinity)-((a.testM??a.trainM)?.r2??-Infinity));
+              loocvAlgo=qAll[0].name;
+            } else {
+              loocvAlgo="linear";
+            }
+          }
+          const maxN=loocvAlgo==="gpr"?Math.min(n,80):Math.min(n,500);
+          const subset=maxN<n;
+          const sIdx=subset?Array.from({length:n},(_,i)=>i).sort(()=>Math.random()-0.5).slice(0,maxN):Array.from({length:n},(_,i)=>i);
+          const looPreds=[];
+          for(let k=0;k<sIdx.length;k++){
+            const i=sIdx[k];
+            const Xk=cX.filter((_,j)=>j!==i);
+            const yk=cY.filter((_,j)=>j!==i);
+            try{
+              const r=runAlgo(loocvAlgo,Xk,yk,[cX[i]],[cY[i]],xCols);
+              const pred=r?.testPred?.[0];
+              if(typeof pred==="number"&&isFinite(pred)){
+                looPreds.push({actual:cY[i],pred});
+              }
+            }catch(_e){}
+          }
+          if(looPreds.length<4){throw new Error('LOOCV 有效預測不足，請換演算法或增加資料');}
+          const ya=looPreds.map(p=>p.actual),yp=looPreds.map(p=>p.pred);
+          const yMean=avg(ya);
+          const ssRes=ya.reduce((s,v,i)=>s+(v-yp[i])**2,0);
+          const ssTot=ya.reduce((s,v)=>s+(v-yMean)**2,0);
+          const looR2=ssTot>0?1-ssRes/ssTot:1;
+          const looMae=ya.reduce((s,v,i)=>s+Math.abs(v-yp[i]),0)/looPreds.length;
+          const looRmse=Math.sqrt(ssRes/looPreds.length);
+          const looMape=ya.reduce((s,v,i)=>v?s+Math.abs((v-yp[i])/v):s,0)/looPreds.length*100;
+          // Full model on all data for coefficients/importance
+          const fullR=runAlgo(loocvAlgo,cX,cY,[],[],xCols);
+          const looMetrics={r2:looR2,adjR2:looR2,mae:looMae,mse:ssRes/looPreds.length,rmse:looRmse,mape:looMape,
+            maxE:ya.reduce((m,v,i)=>Math.abs(v-yp[i])>m?Math.abs(v-yp[i]):m,0),medE:0,n:looPreds.length};
+          const label="LOOCV"+(algo==="best"?"(best→"+loocvAlgo+")":"")+(subset?" (sampled "+maxN+"/"+n+")":"");
+          setResult({...fullR,testM:looMetrics,
+            testPairs:looPreds.map(p=>({actual:p.actual,pred:p.pred,res:p.actual-p.pred})),
+            splitLabel:label});
+          setBestAll(null);setTab("overview");
+          setRunning(false);setSplitMethodUsed(label);setSplitQuality(null);
+          return;
+        } else if(testMode==="upload"&&testRows.length){
           Xtr=cX;ytr=cY;
           const tx=testRows.map(r=>xCols.map(c=>parseFloat(r[c])));
           const ty=testRows.map(r=>parseFloat(r[yCol]));
@@ -1195,7 +1247,7 @@ function App(){
       }catch(e){console.error(e);}
       setRunning(false);
     },80);
-  },[trainRows,testRows,xCols,yCol,algo,testMode,splitR,splitMethod]);
+  },[trainRows,testRows,xCols,yCol,algo,testMode,splitR,splitMethod,avg]);
 
   const sensitivity=useMemo(()=>{
     if(!result||!trainRows.length)return null;
@@ -1362,10 +1414,15 @@ function App(){
                 React.createElement('div',{style:{marginTop:8,fontSize:11,color:C.dim,fontFamily:"monospace"}},'✓',React.createElement('span',{style:{color:C.cyan}},(trainRows.length)),'筆 ·',React.createElement('span',{style:{color:C.amber}},(headers.length)),'欄',(demoLoaded&&React.createElement('span',{style:{color:C.green,marginLeft:6}},'[示範資料]')))
               )),(trainRows.length>0&&(
                 React.createElement('label',{style:{display:"flex",alignItems:"center",gap:7,marginTop:10,cursor:"pointer",userSelect:"none"}},React.createElement('input',{type:'checkbox',checked:showPreview,onChange:e=>setShowPreview(e.target.checked),style:{accentColor:C.cyan,width:14,height:14}}),React.createElement('span',{style:{fontSize:11,color:showPreview?C.cyan:C.dim}},'預覽資料'))
-              )),React.createElement('div',{style:{marginTop:14,marginBottom:8,fontSize:10,letterSpacing:1,color:C.dim,textTransform:"uppercase"}},'測試資料'),React.createElement('div',{style:{display:"flex",gap:6,marginBottom:10}},(["split","upload"].map(m=>(
-                  React.createElement('button',{key:m,onClick:()=>setTestMode(m),style:{flex:1,padding:"6px 0",borderRadius:6,border:"1px solid "+(testMode===m?C.amber:C.border),
-                    background:testMode===m?"#2a180011":"transparent",color:testMode===m?C.amber:C.dim,fontSize:11,cursor:"pointer"}},(m==="split"?"自動拆分":"另外上傳"))
-                )))),(testMode==="split"?(
+              )),React.createElement('div',{style:{marginTop:14,marginBottom:8,fontSize:10,letterSpacing:1,color:C.dim,textTransform:"uppercase"}},'測試方式'),React.createElement('div',{style:{display:"flex",gap:6,marginBottom:10}},([["split","自動拆分"],["upload","另外上傳"],["loocv","LOOCV"]].map(function(item){
+                  var m=item[0],label=item[1];
+                  return(
+                    React.createElement('button',{key:m,onClick:()=>setTestMode(m),style:{flex:1,padding:"6px 0",borderRadius:6,
+                      border:"1px solid "+(testMode===m?C.amber:C.border),
+                      background:testMode===m?"#2a180011":"transparent",
+                      color:testMode===m?C.amber:C.dim,fontSize:11,cursor:"pointer"}},(label))
+                  );
+                }))),(testMode==="split"?(
                 React.createElement('div',null,React.createElement('div',{style:{display:"flex",justifyContent:"space-between",fontSize:10,marginBottom:4,color:C.dim}},React.createElement('span',null,'Train',(splitR),'%'),React.createElement('span',null,'Test',(100-splitR),'%')),React.createElement('input',{type:'range',min:50,max:90,step:5,value:splitR,onChange:e=>setSplitR(+e.target.value),style:{width:"100%",accentColor:C.amber,marginBottom:10}}),React.createElement('div',{style:{fontSize:10,letterSpacing:1,color:C.dim,textTransform:"uppercase",marginBottom:6}},'拆分策略'),React.createElement('div',{style:{display:"flex",gap:0,borderRadius:7,border:"1px solid "+(C.border),overflow:"hidden",marginBottom:10}},([["smart","🧠 智慧拆分"],["random","🎲 均勻隨機"]].map(([m,l])=>(
                       React.createElement('button',{key:m,onClick:()=>setSplitMethod(m),style:{flex:1,padding:"7px 4px",border:"none",cursor:"pointer",fontSize:11,fontWeight:splitMethod===m?700:400,
                         background:splitMethod===m?"#1a3a10":"transparent",color:splitMethod===m?C.green:C.dim,transition:"all .15s",lineHeight:1.3}},(l))
@@ -1382,6 +1439,8 @@ function App(){
                               background:val>=0.85?C.green:val>=0.6?C.amber:C.red,transition:"width .4s"}})))
                       ))))
                   )))
+              ):testMode==="loocv"?(
+                React.createElement('div',{style:{background:"#0a1820",border:"1px solid "+C.cyan+"33",borderRadius:8,padding:"10px 12px",fontSize:11,color:C.dim,lineHeight:1.6}},React.createElement('div',{style:{color:C.cyan,fontWeight:700,marginBottom:4}},("Leave-One-Out Cross-Validation")),React.createElement('div',null,("每次留一筆做測試、其餘全部訓練，重複 n 次取平均，不需要額外測試資料。")),React.createElement('div',{style:{marginTop:4,color:C.dim,fontSize:10}},("注意：GPR / RF 超過 100/500 筆時自動採樣以控制計算時間。")))
               ):(
                 React.createElement(React.Fragment,null,React.createElement(DropZone,{label:'測試資料',file:testFile,onFile:onTestFile,accent:C.amber}),(testRows.length>0&&(
                   React.createElement('div',{style:{marginTop:6,fontSize:11,fontFamily:"monospace",color:C.dim}},("✓ 已載入 "),React.createElement('span',{style:{color:C.amber}},(testRows.length)),(" 筆測試資料"),(headers.length>0&&yCol&&Object.keys(testRows[0]||{}).includes(yCol)&&(
@@ -1423,7 +1482,7 @@ function App(){
             )),(!result&&!running&&!showPreview&&(
               React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:60,textAlign:"center",color:C.dim}},React.createElement('div',{style:{fontSize:52,marginBottom:16,opacity:.3}},'🔮'),React.createElement('div',{style:{fontSize:14}},'匯入資料後執行分析，或點擊「載入示範資料」快速體驗'))
             )),(result&&(
-              React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},React.createElement('span',{style:{fontSize:22}},(ALGOS[result.name]?.icon)),React.createElement('span',{style:{fontSize:17,fontWeight:800,color:ALGOS[result.name]?.color}},(ALGOS[result.name]?.label)),(algo==="best"&&React.createElement('span',{style:{fontSize:10,background:"#ffe04022",color:C.yellow,border:"1px solid "+C.yellow+"44",borderRadius:4,padding:"2px 8px",letterSpacing:1}},'AUTO-SELECTED')),React.createElement('span',{style:{fontSize:10,color:C.dim,fontFamily:"monospace"}},(result.trainM?.n),'train ·',(result.testM?.n??0),'test'),React.createElement('button',{onClick:downloadEmulator,style:{marginLeft:"auto",padding:"6px 14px",borderRadius:6,border:"1px solid "+C.amber+"44",
+              React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}},React.createElement('span',{style:{fontSize:22}},(ALGOS[result.name]?.icon)),React.createElement('span',{style:{fontSize:17,fontWeight:800,color:ALGOS[result.name]?.color}},(ALGOS[result.name]?.label)),(algo==="best"&&React.createElement('span',{style:{fontSize:10,background:"#ffe04022",color:C.yellow,border:"1px solid "+C.yellow+"44",borderRadius:4,padding:"2px 8px",letterSpacing:1}},'AUTO-SELECTED')),React.createElement('span',{style:{fontSize:10,color:C.dim,fontFamily:"monospace"}},(result.splitLabel?"LOOCV ("+result.testM?.n+" folds)":result.trainM?.n+" train · "+(result.testM?.n??0)+" test")),React.createElement('button',{onClick:downloadEmulator,style:{marginLeft:"auto",padding:"6px 14px",borderRadius:6,border:"1px solid "+C.amber+"44",
                     background:C.amber+"11",color:C.amber,fontSize:11,cursor:"pointer"}},'⬇ .pkl')),(bestAll&&(
                   React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:14,overflowX:"auto"}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:10}},'模型比較'),React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace"}},React.createElement('thead',null,React.createElement('tr',{style:{color:C.dim,borderBottom:"1px solid "+(C.border)}},React.createElement('th',{style:{textAlign:"left",padding:"4px 8px"}},'模型'),React.createElement('th',{style:{padding:"4px 8px"}},'Train R²'),React.createElement('th',{style:{padding:"4px 8px"}},'Test R²'),React.createElement('th',{style:{padding:"4px 8px"}},'RMSE(test)'),React.createElement('th',{style:{padding:"4px 8px"}},'MAE(test)'))),React.createElement('tbody',null,(bestAll.map((r,i)=>(
                         React.createElement('tr',{key:r.name,style:{background:i===0?"#1a3a0a":"transparent",borderBottom:"1px solid "+C.border+"22"}},React.createElement('td',{style:{padding:"5px 8px",color:i===0?C.green:C.text}},(i===0?"🏆 ":""),(ALGOS[r.name]?.label)),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px",color:C.cyan}},(fmt(r.trainM?.r2))),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px",color:C.amber}},(r.testM?fmt(r.testM.r2):"—")),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px"}},(r.testM?fmt(r.testM.rmse):"—")),React.createElement('td',{style:{textAlign:"center",padding:"5px 8px"}},(fmt((r.testM??r.trainM)?.mae))))
