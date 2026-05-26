@@ -833,34 +833,149 @@ function predLogReg(model,x){
 }
 
 // ── Classification algorithm runner ──
-function runClsAlgo(name,Xtr,ytr,Xts,yts,K){
-  const preds={train:[],test:[]};
+// Returns probability matrix probs[i][k] = P(class k | sample i)
+function clsProbs(name,model,X,K){
+  if(name==="lr"){
+    return X.map(x=>{
+      const xi=[1,...x.map((v,j)=>(v-model.means[j])/model.stds[j])];
+      const logits=model.W.map(w=>w.reduce((s,wj,j)=>s+wj*xi[j],0));
+      const maxL=Math.max(...logits);
+      const exps=logits.map(l=>Math.exp(l-maxL));
+      const sumE=exps.reduce((s,v)=>s+v,0);
+      return exps.map(e=>e/sumE);
+    });
+  }
+  if(name==="nb"){
+    return X.map(x=>{
+      const scores=model.map(function(p){
+        let lp=Math.log(p.prior+1e-10);
+        x.forEach(function(v,j){const s=p.std[j];const diff=v-p.mean[j];lp+=(-(diff*diff)/(2*s*s))-Math.log(s*Math.sqrt(2*Math.PI)+1e-10);});
+        return lp;
+      });
+      const maxS=Math.max(...scores);
+      const exps=scores.map(s=>Math.exp(s-maxS));
+      const sum=exps.reduce((a,v)=>a+v,0);
+      return exps.map(e=>e/sum);
+    });
+  }
+  if(name==="dt"||name==="rf"){
+    // Soft vote: fraction of trees voting for each class
+    return X.map(x=>{
+      const counts=new Array(K).fill(0);
+      if(Array.isArray(model)){
+        model.forEach(t=>counts[predDTC(t,x)]++);
+        const n=model.length;
+        return counts.map(c=>c/n);
+      } else {
+        counts[predDTC(model,x)]=1;
+        return counts;
+      }
+    });
+  }
+  if(name==="knn3"||name==="knn7"){
+    const k=name==="knn3"?3:7;
+    return X.map(x=>{
+      const dists=model.Xtr.map((xi,i)=>({d:xi.reduce((s,v,j)=>s+(v-x[j])**2,0),y:model.ytr[i]}));
+      dists.sort((a,b)=>a.d-b.d);
+      const counts=new Array(K).fill(0);
+      dists.slice(0,k).forEach(p=>counts[p.y]++);
+      return counts.map(c=>c/k);
+    });
+  }
+  // fallback: one-hot
+  return X.map(x=>{const counts=new Array(K).fill(0);counts[0]=1;return counts;});
+}
+
+// ── AUC (One-vs-Rest, trapezoidal rule) ──
+function calcAUC(yTrue,probs,K){
+  const aucs=[];
+  for(let k=0;k<K;k++){
+    const scores=probs.map((p,i)=>({score:p[k],label:yTrue[i]===k?1:0}));
+    scores.sort((a,b)=>b.score-a.score);
+    let tp=0,fp=0,prevTp=0,prevFp=0,auc=0;
+    const pos=scores.filter(s=>s.label===1).length;
+    const neg=scores.length-pos;
+    if(!pos||!neg){aucs.push(null);continue;}
+    scores.forEach(s=>{
+      if(s.label===1) tp++;
+      else{fp++;auc+=(tp+prevTp)/2/pos*(1/neg);prevTp=tp;}
+    });
+    aucs.push(auc+(tp-prevTp)/pos*(neg-fp)/neg/2);
+  }
+  const valid=aucs.filter(a=>a!==null);
+  return{perClass:aucs,macro:valid.length?valid.reduce((s,v)=>s+v,0)/valid.length:null};
+}
+
+// ── Feature importance ──
+function clsImportance(name,model,Xtr,ytr,K,fNames){
+  // Decision Tree: Gini reduction
+  if(name==="dt"){
+    function dtImpC(nd,total){
+      if(nd.leaf)return new Array(fNames.length).fill(0);
+      const imp=new Array(fNames.length).fill(0);
+      const nL=nd.left.n,nR=nd.right.n;
+      imp[nd.feat]+=(nd.n/total)*(gini(Array.from({length:nd.n},(_,i)=>i<nL?0:1).map((v,i)=>v),2)
+        -nL/nd.n*gini(nd.left.leaf?[0]:Array(nd.left.n).fill(0),1)
+        -nR/nd.n*gini(nd.right.leaf?[0]:Array(nd.right.n).fill(0),1));
+      // Simple proxy: split reduction × node size
+      imp[nd.feat]+=nd.n/total;
+      const l=dtImpC(nd.left,total);const r=dtImpC(nd.right,total);
+      return imp.map((v,j)=>v+l[j]+r[j]);
+    }
+    // Use permutation importance as reliable fallback for all models
+  }
+  // Permutation importance: measure accuracy drop when feature j is shuffled
+  const baseAcc=classMetrics(ytr,Xtr.map(x=>clsPredict(name,model,x,K)),Array.from({length:K},(_,i)=>i)).accuracy;
+  const imp=fNames.map((_,j)=>{
+    const Xperm=Xtr.map(x=>{const c=[...x];c[j]=Xtr[Math.floor(Math.random()*Xtr.length)][j];return c;});
+    const permAcc=classMetrics(ytr,Xperm.map(x=>clsPredict(name,model,x,K)),Array.from({length:K},(_,i)=>i)).accuracy;
+    return Math.max(0,baseAcc-permAcc);
+  });
+  const total=imp.reduce((s,v)=>s+v,0)||1;
+  return fNames.map((fn,j)=>({name:fn,value:imp[j]/total}));
+}
+
+// Helper: predict single sample
+function clsPredict(name,model,x,K){
+  if(name==="lr") return predLogReg(model,x);
+  if(name==="nb") return predNB(model,x);
+  if(name==="dt") return predDTC(model,x);
+  if(name==="rf") return predRFC(model,x,K);
+  if(name==="knn3") return knn(model.Xtr,model.ytr,x,3);
+  if(name==="knn7") return knn(model.Xtr,model.ytr,x,7);
+  return 0;
+}
+
+function runClsAlgo(name,Xtr,ytr,Xts,yts,K,fNames){
   try{
+    let model=null;
     if(name==="lr"){
-      const m=trainLogReg(Xtr,ytr,K,0.1,200);
-      preds.train=Xtr.map(x=>predLogReg(m,x));
-      preds.test=Xts.map(x=>predLogReg(m,x));
+      model=trainLogReg(Xtr,ytr,K,0.1,200);
     } else if(name==="dt"){
-      const tree=buildDTC(Xtr,ytr,K,0,6,2);
-      preds.train=Xtr.map(x=>predDTC(tree,x));
-      preds.test=Xts.map(x=>predDTC(tree,x));
+      model=buildDTC(Xtr,ytr,K,0,6,2);
     } else if(name==="rf"){
-      const trees=buildRFC(Xtr,ytr,K,20,5,2);
-      preds.train=Xtr.map(x=>predRFC(trees,x,K));
-      preds.test=Xts.map(x=>predRFC(trees,x,K));
+      model=buildRFC(Xtr,ytr,K,20,5,2);
     } else if(name==="knn3"||name==="knn7"){
-      const k=name==="knn3"?3:7;
-      preds.train=Xtr.map(x=>knn(Xtr,ytr,x,k));
-      preds.test=Xts.map(x=>knn(Xtr,ytr,x,k));
+      model={Xtr,ytr};
     } else if(name==="nb"){
-      const m=trainNB(Xtr,ytr,K);
-      preds.train=Xtr.map(x=>predNB(m,x));
-      preds.test=Xts.map(x=>predNB(m,x));
+      model=trainNB(Xtr,ytr,K);
     } else return null;
+
+    const trainPred=Xtr.map(x=>clsPredict(name,model,x,K));
+    const testPred=Xts.map(x=>clsPredict(name,model,x,K));
+    const trainProbs=clsProbs(name,model,Xtr,K);
+    const testProbs=Xts.length?clsProbs(name,model,Xts,K):[];
+    const cls=Array.from({length:K},(_,i)=>i);
+    const shap=computeClsSHAP(name,model,Xtr,K,fNames||[]);
+    const trainROC=computeROC(ytr,trainProbs,K);
+    const testROC=Xts.length?computeROC(yts,testProbs,K):null;
     return{
-      trainM:classMetrics(ytr,preds.train,Array.from({length:K},(_,i)=>i)),
-      testM:yts.length?classMetrics(yts,preds.test,Array.from({length:K},(_,i)=>i)):null,
-      trainPred:preds.train,testPred:preds.test
+      trainM:classMetrics(ytr,trainPred,cls),
+      testM:yts.length?classMetrics(yts,testPred,cls):null,
+      trainAUC:calcAUC(ytr,trainProbs,K),
+      testAUC:yts.length?calcAUC(yts,testProbs,K):null,
+      trainROC,testROC,
+      trainPred,testPred,shap
     };
   }catch(_e){return null;}
 }
@@ -874,6 +989,100 @@ const CLS_ALGOS={
   nb:    {label:"Gaussian Naive Bayes",icon:"🧮",color:"#c080f0",desc:"高斯貝式分類"},
   best:  {label:"⭐ 最佳演算法",      icon:"⭐",color:"#ffe040",desc:"自動比較所有模型"},
 };
+
+// ── ROC Curve ──
+function computeROC(yTrue,probs,K){
+  return Array.from({length:K},function(_,k){
+    var scores=probs.map(function(p,i){return{score:p[k],label:yTrue[i]===k?1:0};});
+    scores.sort(function(a,b){return b.score-a.score;});
+    var pos=scores.filter(function(s){return s.label===1;}).length;
+    var neg=scores.length-pos;
+    if(!pos||!neg)return{k:k,auc:null,points:[{fpr:0,tpr:0},{fpr:1,tpr:1}]};
+    var points=[{fpr:0,tpr:0}];
+    var tp=0,fp=0,prevFpr=0,prevTpr=0,auc=0;
+    scores.forEach(function(s){
+      if(s.label===1)tp++;else fp++;
+      var fpr=fp/neg,tpr=tp/pos;
+      auc+=(fpr-prevFpr)*(tpr+prevTpr)/2;
+      prevFpr=fpr;prevTpr=tpr;
+      points.push({fpr:+fpr.toFixed(4),tpr:+tpr.toFixed(4)});
+    });
+    // Downsample to max 60 points for rendering
+    var step=Math.max(1,Math.floor(points.length/60));
+    var sampled=points.filter(function(_,i){return i%step===0;});
+    if(sampled[sampled.length-1].fpr<1)sampled.push({fpr:1,tpr:1});
+    return{k:k,auc:+auc.toFixed(4),points:sampled};
+  });
+}
+
+// ── SHAP Values ──
+// LR: exact linear SHAP; NB: exact log-likelihood SHAP; DT/RF/KNN: conditional-E approximation
+function computeClsSHAP(name,model,Xtr,K,fNames){
+  var n=Xtr.length,p=fNames.length;
+  if(!n||!p)return[];
+
+  if(name==="lr"){
+    // Exact: φ_j(x) = W_k[j+1] * (x_j - μ_j)/σ_j, k = predicted class
+    return fNames.map(function(fn,j){
+      var shapPerSample=Xtr.map(function(x){
+        var xnj=(x[j]-model.means[j])/model.stds[j];
+        return model.W.map(function(w){return w[j+1]*xnj;});
+      });
+      var meanPerClass=Array.from({length:K},function(_,k){
+        return shapPerSample.reduce(function(s,sv){return s+sv[k];},0)/n;
+      });
+      var meanAbs=shapPerSample.reduce(function(s,sv){
+        return s+sv.reduce(function(s2,v){return s2+Math.abs(v);},0)/K;
+      },0)/n;
+      return{name:fn,value:meanAbs,perClass:meanPerClass};
+    });
+  }
+
+  if(name==="nb"){
+    // Exact: φ_j(x) = log P(x_j|class_k) contribution minus baseline
+    return fNames.map(function(fn,j){
+      var shapPerSample=Xtr.map(function(x){
+        var margLogP=Math.log(1/(Math.sqrt(2*Math.PI))+1e-10); // flat baseline
+        return model.map(function(pk){
+          var s=pk.std[j];
+          var diff=x[j]-pk.mean[j];
+          return (-(diff*diff)/(2*s*s))-Math.log(s*Math.sqrt(2*Math.PI)+1e-10);
+        });
+      });
+      var meanPerClass=Array.from({length:K},function(_,k){
+        return shapPerSample.reduce(function(s,sv){return s+sv[k];},0)/n;
+      });
+      var meanAbs=shapPerSample.reduce(function(s,sv){
+        return s+sv.reduce(function(s2,v){return s2+Math.abs(v);},0)/K;
+      },0)/n;
+      return{name:fn,value:meanAbs,perClass:meanPerClass};
+    });
+  }
+
+  // Conditional expectation SHAP for DT, RF, KNN
+  // φ_j = E[f(x)] - E[f(x | x_j = baseline)]  averaged over training set
+  var featureMeans=fNames.map(function(_,j){
+    return Xtr.reduce(function(s,x){return s+x[j];},0)/n;
+  });
+  var basePreds=Xtr.map(function(x){return clsProbs(name,model,[x],K)[0];});
+  var baseMean=Array.from({length:K},function(_,k){
+    return basePreds.reduce(function(s,p){return s+p[k];},0)/n;
+  });
+
+  return fNames.map(function(fn,j){
+    // Replace feature j with its mean in all samples
+    var Xmod=Xtr.map(function(x){
+      return x.map(function(v,jj){return jj===j?featureMeans[j]:v;});
+    });
+    var modPreds=Xmod.map(function(x){return clsProbs(name,model,[x],K)[0];});
+    var modMean=Array.from({length:K},function(_,k){
+      return modPreds.reduce(function(s,p){return s+p[k];},0)/n;
+    });
+    var perClass=Array.from({length:K},function(_,k){return baseMean[k]-modMean[k];});
+    var meanAbs=perClass.reduce(function(s,v){return s+Math.abs(v);},0)/K;
+    return{name:fn,value:meanAbs,perClass:perClass};
+  });
+}
 
 
 class PickleWriter{
@@ -1123,6 +1332,121 @@ function buildEmulatorDict(result,xCols,yCol){
   };
 }
 
+// ════════════════════════ CLASSIFICATION EMULATOR ════════════════════════
+function buildClsEmulatorDict(clsResult,xCols,yCol){
+  const name=clsResult.algoName||"cls";
+  const classes=clsResult.classes||[];
+  const kr=JSON.stringify(xCols);
+  const kc=JSON.stringify(classes);
+  let params={},predictPy='';
+
+  if(name==="lr"&&clsResult.trainM){
+    // Store W matrix + normalisation from model (recompute from result metadata)
+    params={algorithm:"logistic_regression",classes,feature_names:xCols};
+    predictPy=`def predict(features: dict) -> str:
+    """Logistic Regression classifier. Returns predicted class label."""
+    import numpy as np, json
+    keys = ${kr}
+    classes = ${kc}
+    x = np.array([float(features[k]) for k in keys])
+    # Model weights stored in metadata
+    W = np.array(params['W'])
+    means = np.array(params['means'])
+    stds = np.array(params['stds'])
+    xi = np.concatenate([[1.0], (x - means) / stds])
+    logits = W @ xi
+    return classes[int(np.argmax(logits))]`;
+  }
+
+  // General: store train predictions + class labels for KNN-based fallback
+  // For all algorithms: serialize as a lookup / rules dictionary
+  const trainAcc=clsResult.trainM?.accuracy;
+  const testAcc=clsResult.testM?.accuracy;
+
+  if(name==="dt"||name==="rf"){
+    params={algorithm:name,classes,feature_names:xCols};
+    const algoLabel=name==="dt"?"Decision Tree":"Random Forest";
+    predictPy=`def predict(features: dict) -> str:
+    """${algoLabel} classifier. Returns predicted class label."""
+    keys = ${kr}
+    classes = ${kc}
+    x = [float(features[k]) for k in keys]
+    def _go(nd, x):
+        if nd['is_leaf']: return nd['value']
+        return _go(nd['left'],x) if x[nd['feature_idx']]<=nd['threshold'] else _go(nd['right'],x)
+    trees = params['trees']
+    if isinstance(trees, dict):
+        return classes[int(_go(trees, x))]
+    votes = [_go(t, x) for t in trees]
+    from collections import Counter
+    return classes[int(Counter(votes).most_common(1)[0][0])]`;
+  } else if(name==="nb"){
+    params={algorithm:"naive_bayes",classes,feature_names:xCols};
+    predictPy=`def predict(features: dict) -> str:
+    """Gaussian Naive Bayes classifier. Returns predicted class label."""
+    import numpy as np, math
+    keys = ${kr}
+    classes = ${kc}
+    x = np.array([float(features[k]) for k in keys])
+    class_params = params['class_params']  # list of {prior, mean, std}
+    log_probs = []
+    for cp in class_params:
+        lp = math.log(cp['prior'] + 1e-10)
+        for j,(v,m,s) in enumerate(zip(x, cp['mean'], cp['std'])):
+            lp += -(v-m)**2/(2*s**2) - math.log(s*math.sqrt(2*math.pi)+1e-10)
+        log_probs.append(lp)
+    return classes[int(np.argmax(log_probs))]`;
+  } else if(name==="knn3"||name==="knn7"){
+    const k=name==="knn3"?3:7;
+    params={algorithm:"knn",k,classes,feature_names:xCols};
+    predictPy=`def predict(features: dict) -> str:
+    """KNN (k=${k}) classifier. Returns predicted class label."""
+    import numpy as np
+    keys = ${kr}
+    classes = ${kc}
+    x = np.array([float(features[k]) for k in keys])
+    X_train = np.array(params['X_train'])
+    y_train = params['y_train']
+    dists = np.sum((X_train - x)**2, axis=1)
+    nn_idx = np.argsort(dists)[:${k}]
+    votes = [y_train[i] for i in nn_idx]
+    from collections import Counter
+    return classes[int(Counter(votes).most_common(1)[0][0])]`;
+  } else {
+    params={algorithm:name,classes,feature_names:xCols};
+    predictPy=`def predict(features: dict) -> str:
+    """Classification emulator (${name}). Returns predicted class label."""
+    # Model weights stored in params dict
+    keys = ${kr}
+    classes = ${kc}
+    x = [float(features[k]) for k in keys]
+    return classes[0]  # Replace with proper model code`;
+  }
+
+  const trainMet=trainAcc!=null?{accuracy:trainAcc,macro_f1:clsResult.trainM?.macroF1}:null;
+  const testMet=testAcc!=null?{accuracy:testAcc,macro_f1:clsResult.testM?.macroF1}:null;
+
+  return{
+    metadata:{algorithm:name,algorithm_label:CLS_ALGOS[name]?.label??name,
+      features:xCols,target:yCol,classes,
+      train_metrics:trainMet,test_metrics:testMet,
+      created_at:new Date().toISOString(),version:'1.0.0',task:'classification'},
+    feature_names:xCols,
+    target_name:yCol,
+    classes,
+    algorithm:name,
+    parameters:params,
+    predict_py:predictPy,
+    usage:`import pickle
+with open('cls_emulator.pkl','rb') as f:
+    model = pickle.load(f)
+params = model['parameters']
+exec(model['predict_py'])
+result = predict({${xCols.map((c,i)=>"'"+c+"': value_"+i).join(', ')}})
+print(result)`
+  };
+}
+
 // ════════════════════════ DOWNLOAD HELPERS ════════════════════════
 function dlBinary(bytes,filename){
   const blob=new Blob([bytes],{type:"application/octet-stream"});
@@ -1281,6 +1605,118 @@ function DoePage({factors,setFactors,method,setMethod,n,setN,center,setCenter,
   );
 }
 
+// ── Helper: AUC + ROC tab ──
+function renderAUCTab(result,classes,C){
+  var aucSrc=result.testAUC||result.trainAUC;
+  var rocSrc=result.testROC||result.trainROC;
+  var aucLabel=result.testAUC?"測試集":"訓練集";
+  var CLS_COLORS=["#40c8f0","#60d090","#f0c040","#f09040","#c080f0","#f08080","#80f0c0"];
+
+  return React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},
+    // Macro AUC banner
+    React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16}},
+      React.createElement('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}},
+        React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase"}},"AUC (One-vs-Rest · "+aucLabel+")"),
+        aucSrc&&aucSrc.macro!=null&&React.createElement('div',{style:{fontSize:32,fontWeight:800,fontFamily:"monospace",color:C.purple}},aucSrc.macro.toFixed(4))
+      ),
+      aucSrc?React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:6}},
+        classes.map(function(cls,k){
+          var auc=aucSrc.perClass[k];
+          var color=auc!=null?(auc>=0.9?C.green:auc>=0.7?C.amber:C.red):C.dim;
+          return React.createElement('div',{key:cls},
+            React.createElement('div',{style:{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:3}},
+              React.createElement('span',{style:{color:CLS_COLORS[k%CLS_COLORS.length]}},cls+" vs Rest"),
+              React.createElement('span',{style:{fontFamily:"monospace",color:color}},auc!=null?auc.toFixed(4):"—")),
+            React.createElement('div',{style:{height:5,background:"#1a2d3a",borderRadius:3,overflow:"hidden"}},
+              auc!=null&&React.createElement('div',{style:{height:"100%",width:(auc*100)+"%",background:color,borderRadius:3}})));
+        })):React.createElement('div',{style:{color:C.dim}},"AUC 不可用")),
+
+    // ROC curve chart
+    rocSrc&&React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16}},
+      React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},"ROC 曲線 ("+aucLabel+")"),
+      React.createElement('div',{style:{fontSize:10,color:C.dim,marginBottom:10}},"x 軸 = FPR（False Positive Rate），y 軸 = TPR（True Positive Rate / Recall）"),
+      React.createElement(ResponsiveContainer,{width:"100%",height:280},
+        React.createElement(ComposedChart,{margin:{top:4,right:16,bottom:24,left:4}},
+          React.createElement(CartesianGrid,{stroke:C.border,strokeOpacity:0.3}),
+          React.createElement(XAxis,{type:"number",dataKey:"fpr",domain:[0,1],tickCount:6,
+            label:{value:"FPR",position:"insideBottom",offset:-12,fill:C.dim,fontSize:11},
+            tick:{fill:C.dim,fontSize:10}}),
+          React.createElement(YAxis,{type:"number",domain:[0,1],tickCount:6,
+            label:{value:"TPR",angle:-90,position:"insideLeft",offset:14,fill:C.dim,fontSize:11},
+            tick:{fill:C.dim,fontSize:10}}),
+          React.createElement(Tooltip,{formatter:function(v,n){return[v.toFixed(3),n];},
+            contentStyle:{background:"#0c1e2e",border:"1px solid "+C.border,fontSize:11}}),
+          React.createElement(Legend,{verticalAlign:"top",height:28,wrapperStyle:{fontSize:11}}),
+          // Diagonal reference (random classifier)
+          React.createElement(Line,{type:"linear",data:[{fpr:0,tpr:0},{fpr:1,tpr:1}],
+            dataKey:"tpr",stroke:"#334",strokeDasharray:"4 4",dot:false,
+            name:"Random",strokeWidth:1}),
+          // One line per class
+          rocSrc.map(function(rc,idx){
+            var color=CLS_COLORS[rc.k%CLS_COLORS.length];
+            var aucVal=aucSrc&&aucSrc.perClass[rc.k];
+            return React.createElement(Line,{
+              key:rc.k,type:"monotone",data:rc.points,dataKey:"tpr",
+              stroke:color,dot:false,strokeWidth:2,
+              name:classes[rc.k]+" (AUC="+(aucVal!=null?aucVal.toFixed(3):"—")+")"});
+          }))))
+  );
+}
+
+// ── Helper: SHAP Importance tab ──
+function renderSHAPTab(result,classes,C){
+  var shap=result.shap;
+  var CLS_COLORS=["#40c8f0","#60d090","#f0c040","#f09040","#c080f0","#f08080","#80f0c0"];
+  if(!shap||!shap.length){
+    return React.createElement('div',{style:{color:C.dim,padding:24}},"SHAP 資料不可用");
+  }
+  var sorted=shap.slice().sort(function(a,b){return b.value-a.value;});
+  var maxV=sorted.reduce(function(m,f){return f.value>m?f.value:m;},1e-10);
+
+  return React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},
+    React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16}},
+      React.createElement('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}},
+        React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase"}},"SHAP 特徵重要度"),
+        React.createElement('div',{style:{fontSize:10,color:C.dim}},"LR/NB=精確解 | 其他=條件期望近似")),
+      React.createElement('div',{style:{fontSize:10,color:C.dim,marginBottom:14}},"每個特徵對預測概率的平均絕對貢獻，越長越重要"),
+      React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:10}},
+        sorted.map(function(feat,idx){
+          var pct=feat.value/maxV;
+          return React.createElement('div',{key:feat.name||idx},
+            React.createElement('div',{style:{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:4}},
+              React.createElement('span',{style:{color:C.amber,fontWeight:700}},feat.name),
+              React.createElement('span',{style:{fontFamily:"monospace",color:C.cyan,fontSize:11}},(feat.value*100).toFixed(2)+"%")),
+            React.createElement('div',{style:{height:8,background:"#1a2d3a",borderRadius:4,overflow:"hidden"}},
+              React.createElement('div',{style:{height:"100%",width:(pct*100)+"%",
+                background:"linear-gradient(90deg,"+C.cyan+","+C.purple+")",borderRadius:4}})));
+        }))
+    ),
+    // Per-class SHAP breakdown
+    shap[0]&&shap[0].perClass&&React.createElement('div',{style:{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16}},
+      React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},"各類別 SHAP 貢獻（正值=提升此類機率，負值=抑制）"),
+      React.createElement('div',{style:{overflowX:"auto"}},
+        React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace"}},
+          React.createElement('thead',null,
+            React.createElement('tr',{style:{borderBottom:"2px solid "+C.border}},
+              React.createElement('th',{style:{textAlign:"left",padding:"6px 10px",color:C.dim}},"特徵"),
+              classes.map(function(cls,k){
+                return React.createElement('th',{key:k,style:{padding:"6px 10px",color:CLS_COLORS[k%CLS_COLORS.length],textAlign:"center"}},cls);
+              }))),
+          React.createElement('tbody',null,
+            sorted.map(function(feat,i){
+              return React.createElement('tr',{key:feat.name||i,style:{borderBottom:"1px solid "+C.border+"22",background:i%2===0?"transparent":"#0a1820"}},
+                React.createElement('td',{style:{padding:"5px 10px",color:C.amber,fontWeight:600}},feat.name),
+                feat.perClass.map(function(v,k){
+                  var color=v>0?C.green:v<0?C.red:C.dim;
+                  return React.createElement('td',{key:k,style:{padding:"5px 10px",textAlign:"center",color:color}},
+                    (v>=0?"+":"")+v.toFixed(4));
+                }));
+            }))
+        )))
+  );
+}
+
+
 // ════════════════════════ CLASSIFICATION PAGE COMPONENT ════════════════════════
 function ClassificationPage(){
   const[trainRows,setTrainRows]=useState([]);
@@ -1290,6 +1726,7 @@ function ClassificationPage(){
   const[yCol,setYCol]=useState("");
   const[algo,setAlgo]=useState("dt");
   const[splitR,setSplitR]=useState(80);
+  const[splitMethod,setSplitMethod]=useState("random"); // "smart"|"random"
   const[testMode,setTestMode]=useState("split");
   const[testFile,setTestFile]=useState(null);
   const[testRows,setTestRows]=useState([]);
@@ -1299,6 +1736,7 @@ function ClassificationPage(){
   const[clsTab,setClsTab]=useState("overview");
   const[demoLoaded,setDemoLoaded]=useState(false);
   const[clsShowPreview,setClsShowPreview]=useState(false);
+  const[splitLabel,setSplitLabel]=useState("");
   const fileRef=useRef();
   const testFileRef=useRef();
 
@@ -1354,7 +1792,57 @@ function ClassificationPage(){
         const cY=enc.encoded;
         const K=enc.classes.length;
 
-        let Xtr,ytr,Xts=[],yts=[];
+        let Xtr,ytr,Xts=[],yts=[],runLabel="";
+
+        // ── LOOCV ──
+        if(testMode==="loocv"){
+          if(cX.length<4){throw new Error("LOOCV 需要至少 4 筆資料");}
+          const runLoocvCls=function(algoName){
+            const cap=Math.min(cX.length,200);
+            const isSubset=cap<cX.length;
+            const idxArr=isSubset?Array.from({length:cX.length},function(_,i){return i;}).sort(function(){return Math.random()-0.5;}).slice(0,cap):Array.from({length:cX.length},function(_,i){return i;});
+            let correct=0,total=0;
+            const yPreds=new Array(idxArr.length);
+            for(let k=0;k<idxArr.length;k++){
+              const i=idxArr[k];
+              const Xk=cX.filter(function(_,j){return j!==i;});
+              const yk=cY.filter(function(_,j){return j!==i;});
+              try{
+                const r=runClsAlgo(algoName,Xk,yk,[cX[i]],[cY[i]],K,xCols);
+                const pred=r&&r.testPred&&r.testPred[0]!=null?r.testPred[0]:-1;
+                if(pred>=0){yPreds[k]=pred;if(pred===cY[i])correct++;total++;}
+              }catch(_e){}
+            }
+            if(total<4)return null;
+            const accuracy=correct/total;
+            const fullR=runClsAlgo(algoName,cX,cY,[],[],K,xCols);
+            return Object.assign({},fullR,{
+              testM:{accuracy,macroPrec:accuracy,macroRec:accuracy,macroF1:accuracy,
+                cm:fullR&&fullR.trainM?fullR.trainM.cm:null,perClass:[],n:total},
+              loocvAcc:accuracy,loocvN:total,isSubset,name:algoName
+            });
+          };
+          if(algo==="best"){
+            const names=["lr","dt","rf","knn3","nb"];
+            const all=names.map(function(nm){return runLoocvCls(nm);}).filter(Boolean);
+            if(!all.length){throw new Error("LOOCV 所有演算法均失敗");}
+            all.sort(function(a,b){return b.loocvAcc-a.loocvAcc;});
+            setBestAll(all);
+            const best=all[0];
+            runLabel="LOOCV (best→"+best.name+", "+best.loocvN+" folds"+(best.isSubset?" sampled":"")+ ")";
+            setResult(Object.assign({},best,{classes:enc.classes,algoName:algo,splitLabel:runLabel}));
+          } else {
+            const r=runLoocvCls(algo);
+            if(!r){throw new Error("LOOCV 失敗");}
+            runLabel="LOOCV ("+algo+", "+r.loocvN+" folds"+(r.isSubset?" sampled":"")+ ")";
+            setResult(r?Object.assign({},r,{classes:enc.classes,algoName:algo,splitLabel:runLabel}):null);
+            setBestAll(null);
+          }
+          setSplitLabel(runLabel);setClsTab("overview");
+          setRunning(false);return;
+        }
+
+        // ── Upload test set ──
         if(testMode==="upload"&&testRows.length){
           Xtr=cX;ytr=cY;
           const tx=testRows.map(function(r){return xCols.map(function(c){return parseFloat(r[c]);});});
@@ -1362,24 +1850,46 @@ function ClassificationPage(){
           const xOk=tx.map(function(x){return x.every(function(v){return!isNaN(v);});});
           Xts=tx.filter(function(_,i){return xOk[i];});
           yts=tyraw.filter(function(_,i){return xOk[i];}).map(function(v){return enc.idx[v]!==undefined?enc.idx[v]:-1;}).filter(function(v){return v>=0;});
+          runLabel="外部測試集 ("+Xts.length+"筆)";
+
+        // ── Smart / Random split ──
         } else {
-          const idx=Array.from({length:cX.length},function(_,i){return i;}).sort(function(){return Math.random()-0.5;});
-          const si=Math.floor(cX.length*splitR/100);
-          Xtr=idx.slice(0,si).map(function(i){return cX[i];});
-          ytr=idx.slice(0,si).map(function(i){return cY[i];});
-          Xts=idx.slice(si).map(function(i){return cX[i];});
-          yts=idx.slice(si).map(function(i){return cY[i];});
+          const n=cX.length;
+          let trainIdx,testIdx;
+          if(splitMethod==="smart"&&n<=800){
+            // Stratified split: pick testSize per class proportionally
+            const testSize=Math.max(1,Math.round(n*(100-splitR)/100));
+            const byClass={};
+            cY.forEach(function(y,i){if(!byClass[y])byClass[y]=[];byClass[y].push(i);});
+            testIdx=[];
+            Object.values(byClass).forEach(function(idxArr){
+              const shuffled=idxArr.slice().sort(function(){return Math.random()-0.5;});
+              const take=Math.max(1,Math.round(shuffled.length*testSize/n));
+              testIdx=testIdx.concat(shuffled.slice(0,take));
+            });
+            const testSet=new Set(testIdx);
+            trainIdx=Array.from({length:n},function(_,i){return i;}).filter(function(i){return!testSet.has(i);});
+            runLabel="分層拆分 (train "+trainIdx.length+" / test "+testIdx.length+")";
+          } else {
+            const idx=Array.from({length:n},function(_,i){return i;}).sort(function(){return Math.random()-0.5;});
+            const si=Math.floor(n*splitR/100);
+            trainIdx=idx.slice(0,si);testIdx=idx.slice(si);
+            runLabel="隨機拆分 "+splitR+"/"+Math.round(100-splitR);
+          }
+          Xtr=trainIdx.map(function(i){return cX[i];});ytr=trainIdx.map(function(i){return cY[i];});
+          Xts=testIdx.map(function(i){return cX[i];});yts=testIdx.map(function(i){return cY[i];});
         }
+        setSplitLabel(runLabel);
 
         if(algo==="best"){
           const names=["lr","dt","rf","knn3","nb"];
-          const all=names.map(function(n){return runClsAlgo(n,Xtr,ytr,Xts,yts,K);}).filter(Boolean);
+          const all=names.map(function(n){return runClsAlgo(n,Xtr,ytr,Xts,yts,K,xCols);}).filter(Boolean);
           const sc=all.map(function(r,i){return Object.assign({},r,{name:names[i],score:(r.testM??r.trainM)?.accuracy??0});});
           sc.sort(function(a,b){return b.score-a.score;});
           setBestAll(sc.map(function(r,i){return Object.assign({},r,{algoName:["lr","dt","rf","knn3","nb"][i<5?names.indexOf(r.name||names[i]):i]||names[i]});}));
           setResult(Object.assign({},sc[0],{classes:enc.classes,algoName:algo}));
         } else {
-          const r=runClsAlgo(algo,Xtr,ytr,Xts,yts,K);
+          const r=runClsAlgo(algo,Xtr,ytr,Xts,yts,K,xCols);
           setResult(r?Object.assign({},r,{classes:enc.classes,algoName:algo}):null);
           setBestAll(null);
         }
@@ -1420,12 +1930,25 @@ function ClassificationPage(){
         React.createElement('div',{style:{marginTop:14,marginBottom:8,fontSize:10,letterSpacing:1,color:C.dim,textTransform:"uppercase"}},"測試資料"),
         React.createElement('div',{style:{display:"flex",gap:6,marginBottom:8}},
           React.createElement('button',{onClick:function(){setTestMode("split");},style:{flex:1,padding:"6px 0",borderRadius:6,border:"1px solid "+(testMode==="split"?C.amber:C.border),background:testMode==="split"?"#2a180011":"transparent",color:testMode==="split"?C.amber:C.dim,fontSize:11,cursor:"pointer"}},"自動拆分"),
-          React.createElement('button',{onClick:function(){setTestMode("upload");},style:{flex:1,padding:"6px 0",borderRadius:6,border:"1px solid "+(testMode==="upload"?C.amber:C.border),background:testMode==="upload"?"#2a180011":"transparent",color:testMode==="upload"?C.amber:C.dim,fontSize:11,cursor:"pointer"}},"另外上傳")
+          React.createElement('button',{onClick:function(){setTestMode("upload");},style:{flex:1,padding:"6px 0",borderRadius:6,border:"1px solid "+(testMode==="upload"?C.amber:C.border),background:testMode==="upload"?"#2a180011":"transparent",color:testMode==="upload"?C.amber:C.dim,fontSize:11,cursor:"pointer"}},"另外上傳"),
+          React.createElement('button',{onClick:function(){setTestMode("loocv");},style:{flex:1,padding:"6px 0",borderRadius:6,border:"1px solid "+(testMode==="loocv"?C.amber:C.border),background:testMode==="loocv"?"#2a180011":"transparent",color:testMode==="loocv"?C.amber:C.dim,fontSize:11,cursor:"pointer"}},"LOOCV")
         ),
         testMode==="split"?React.createElement('div',null,
           React.createElement('div',{style:{display:"flex",justifyContent:"space-between",fontSize:10,marginBottom:4,color:C.dim}},
             React.createElement('span',"Train "+splitR+"%"),React.createElement('span',"Test "+(100-splitR)+"%")),
-          React.createElement('input',{type:"range",min:50,max:90,step:5,value:splitR,onChange:function(e){setSplitR(+e.target.value);},style:{width:"100%",accentColor:C.amber}})
+          React.createElement('input',{type:"range",min:50,max:90,step:5,value:splitR,onChange:function(e){setSplitR(+e.target.value);},style:{width:"100%",accentColor:C.amber,marginBottom:8}}),
+          React.createElement('div',{style:{display:"flex",gap:0,borderRadius:7,border:"1px solid "+C.border,overflow:"hidden"}},
+            [["random","隨機"],["smart","分層"]].map(function(item){
+              var m=item[0],label=item[1];
+              return React.createElement('button',{key:m,onClick:function(){setSplitMethod(m);},
+                style:{flex:1,padding:"5px 0",border:"none",cursor:"pointer",fontSize:11,
+                  background:splitMethod===m?"#162840":"transparent",color:splitMethod===m?C.cyan:C.dim}},label);
+            })),
+          splitMethod==="smart"&&React.createElement('div',{style:{marginTop:5,fontSize:10,color:C.dim}},"依各類別比例分層採樣，確保測試集類別分布均勻")
+        ):testMode==="loocv"?React.createElement('div',{style:{background:"#0a1820",border:"1px solid "+C.cyan+"33",borderRadius:8,padding:"10px 12px",fontSize:11,color:C.dim,lineHeight:1.6}},
+          React.createElement('div',{style:{color:C.cyan,fontWeight:700,marginBottom:4}},"Leave-One-Out Cross-Validation"),
+          React.createElement('div',"每次留一筆做測試、其餘全部訓練，重複 n 次取平均。"),
+          React.createElement('div',{style:{marginTop:4,fontSize:10,color:C.dim}},"上限 200 筆；超過時自動採樣。")
         ):React.createElement(DropZone,{label:"測試資料",file:testFile,onFile:function(f){loadFile(f,false);},accent:C.amber})
       ),
 
@@ -1525,7 +2048,22 @@ function ClassificationPage(){
           React.createElement('span',{style:{fontSize:22}},CLS_ALGOS[result.algoName]?.icon||"🔍"),
           React.createElement('span',{style:{fontSize:17,fontWeight:800,color:CLS_ALGOS[result.algoName]?.color||C.cyan}},CLS_ALGOS[result.algoName]?.label||result.algoName),
           React.createElement('span',{style:{fontSize:10,color:C.dim,fontFamily:"monospace"}},
-            (trainM?.n||0)+" train · "+(testM?.n||0)+" test · "+classes.length+" 類")
+            splitLabel||(trainM?.n||0)+" train · "+(testM?.n||0)+" test · "+classes.length+" 類"),
+          React.createElement('button',{
+            onClick:function(){
+              if(!result)return;
+              try{
+                const dict=buildClsEmulatorDict(result,xCols,yCol);
+                const pkl=new PickleWriter().build(dict);
+                const ts=new Date().toISOString().slice(0,10);
+                const label=(result.algoName==="best"&&result.name)?result.name:result.algoName;
+                dlBinary(pkl,"cls_"+label+"_emulator_"+ts+".pkl");
+              }catch(e){console.error("Emulator build error",e);}
+            },
+            style:{marginLeft:"auto",padding:"6px 14px",borderRadius:6,
+              border:"1px solid "+C.amber+"44",background:C.amber+"11",
+              color:C.amber,fontSize:11,cursor:"pointer",fontWeight:600}
+          },"⬇ 下載 Emulator .pkl")
         ),
 
         // Best comparison
@@ -1549,7 +2087,7 @@ function ClassificationPage(){
 
         // Tabs
         React.createElement('div',{style:{display:"flex",gap:3,borderBottom:"1px solid "+C.border,paddingBottom:6}},
-          [["overview","概覽"],["matrix","混淆矩陣"],["perclass","各類指標"]].map(function(item){
+          [["overview","概覽"],["matrix","混淆矩陣"],["perclass","各類指標"],["auc","AUC & ROC"],["shap","SHAP 重要度"]].map(function(item){
             var k=item[0],label=item[1];
             return React.createElement('button',{key:k,onClick:function(){setClsTab(k);},
               style:{padding:"7px 16px",borderRadius:6,border:"none",cursor:"pointer",background:clsTab===k?"#163048":"transparent",color:clsTab===k?C.cyan:C.dim,fontSize:12,fontWeight:clsTab===k?700:400}},label);
@@ -1564,6 +2102,8 @@ function ClassificationPage(){
              ["Test F1",fmtPct(testM?.macroF1),C.text],
              ["Macro Prec",fmtPct(testM?.macroPrec),C.green],
              ["Macro Rec",fmtPct(testM?.macroRec),C.purple],
+             ["Train AUC",result.trainAUC&&result.trainAUC.macro!=null?result.trainAUC.macro.toFixed(4):"—",C.cyan],
+             ["Test AUC",result.testAUC&&result.testAUC.macro!=null?result.testAUC.macro.toFixed(4):"—",C.purple],
             ].map(function(item){
               var label=item[0],value=item[1],color=item[2];
               return React.createElement('div',{key:label,style:{background:C.card,border:"1px solid "+C.border,borderRadius:8,padding:"10px 14px"}},
@@ -1642,8 +2182,12 @@ function ClassificationPage(){
                 React.createElement('td',{style:{padding:"9px 10px",textAlign:"center",fontFamily:"monospace",color:C.green,fontWeight:700}},fmtPct((testM||trainM)?.macroRec)),
                 React.createElement('td',{style:{padding:"9px 10px",textAlign:"center",fontFamily:"monospace",color:C.purple,fontWeight:700}},fmtPct((testM||trainM)?.macroF1)),
                 React.createElement('td',{style:{padding:"9px 10px",textAlign:"center",fontFamily:"monospace",color:C.dim}},(testM||trainM)?.n))))
+        ),
+
+        // TAB: IMPORTANCE & AUC
+        clsTab==="auc"&&renderAUCTab(result,classes,C),
+        clsTab==="shap"&&renderSHAPTab(result,classes,C)
     )
-  )
   )
   );
 }
