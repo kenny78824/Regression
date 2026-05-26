@@ -1199,12 +1199,16 @@ function readPickle(arrayBuffer){
 function runPklPrediction(model,featureValues){
   const algo=model.algorithm;
   const p=model.parameters;
+  const isClassifier=model.metadata?.task==='classification'||!!model.classes;
+  const classes=model.classes||p?.classes||[];
   const x=featureValues.map(v=>isFinite(v)?v:0);
   function goTree(nd,x){
     if(nd.is_leaf)return nd.value;
     return x[nd.feature_idx]<=nd.threshold?goTree(nd.left,x):goTree(nd.right,x);
   }
-  if(['linear','ridge','lasso','elasticnet'].includes(algo)){
+
+  // ── Regression ──
+  if(['linear','ridge','lasso','elasticnet'].includes(algo)&&!isClassifier){
     const{coefficients,intercept,feature_means,feature_stds,normalized}=p;
     let xn=[...x];
     if(normalized&&feature_means&&feature_stds)xn=x.map((v,i)=>(v-feature_means[i])/(feature_stds[i]||1));
@@ -1223,8 +1227,55 @@ function runPklPrediction(model,featureValues){
     const kStar=X_train.map(xi=>sigma_f**2*Math.exp(-xi.reduce((s,v,i)=>s+(v-xn[i])**2,0)/(2*length_scale**2)));
     return kStar.reduce((s,v,i)=>s+v*alpha[i],0)*y_std+y_mean;
   }
-  if(algo==='dt')return goTree(p.tree,x);
-  if(algo==='rf'){const preds=p.trees.map(t=>goTree(t,x));return preds.reduce((s,v)=>s+v,0)/preds.length;}
+  if(algo==='dt'&&!isClassifier)return goTree(p.tree,x);
+  if(algo==='rf'&&!isClassifier){const preds=p.trees.map(t=>goTree(t,x));return preds.reduce((s,v)=>s+v,0)/preds.length;}
+
+  // ── Classification ──
+  if(algo==='lr'){
+    const W=p.W,means=p.means||p.feature_means,stds=p.stds||p.feature_stds;
+    if(!W)throw new Error('LR emulator 缺少 W 矩陣');
+    const xn=x.map((v,i)=>(v-(means?means[i]:0))/((stds&&stds[i])||1));
+    const xi=[1,...xn];
+    const logits=W.map(w=>w.reduce((s,wj,j)=>s+wj*xi[j],0));
+    const idx=logits.indexOf(Math.max(...logits));
+    return classes[idx]??idx;
+  }
+  if(algo==='naive_bayes'||algo==='nb'){
+    const cp=p.class_params||p.classParams;
+    if(!cp)throw new Error('NB emulator 缺少 class_params');
+    const scores=cp.map(pk=>{
+      let lp=Math.log((pk.prior||pk.p||1e-10)+1e-10);
+      x.forEach((v,j)=>{
+        const m=pk.mean[j],s=pk.std[j]||1e-6;
+        const d=v-m; lp+=(-(d*d)/(2*s*s))-Math.log(s*Math.sqrt(2*Math.PI)+1e-10);
+      });
+      return lp;
+    });
+    const idx=scores.indexOf(Math.max(...scores));
+    return classes[idx]??idx;
+  }
+  if(algo==='knn'||algo==='knn3'||algo==='knn7'){
+    const k=p.k||3;
+    const Xtr=p.X_train||p.Xtr;
+    const ytr=p.y_train||p.ytr;
+    if(!Xtr||!ytr)throw new Error('KNN emulator 缺少 X_train / y_train');
+    const dists=Xtr.map((xi,i)=>({d:xi.reduce((s,v,j)=>s+(v-x[j])**2,0),y:ytr[i]}));
+    dists.sort((a,b)=>a.d-b.d);
+    const votes={};dists.slice(0,k).forEach(pt=>{votes[pt.y]=(votes[pt.y]||0)+1;});
+    const idx=+Object.entries(votes).sort((a,b)=>b[1]-a[1])[0][0];
+    return classes[idx]??idx;
+  }
+  if(algo==='dt'&&isClassifier){
+    const idx=goTree(p.tree,x);
+    return classes[idx]??idx;
+  }
+  if(algo==='rf'&&isClassifier){
+    const tree=p.trees||[p.tree];
+    const votes={};
+    tree.forEach(t=>{const idx=goTree(t,x);votes[idx]=(votes[idx]||0)+1;});
+    const idx=+Object.entries(votes).sort((a,b)=>b[1]-a[1])[0][0];
+    return classes[idx]??idx;
+  }
   throw new Error('不支援的演算法: '+(algo));
 }
 
@@ -2472,6 +2523,7 @@ function App(){
       setPrediction(runPklPrediction(pklModel,vals));setPredError('');
     }catch(e){setPredError(e.message);}
   };
+  const isClsPkl=!!(pklModel&&(pklModel.metadata?.task==='classification'||pklModel.classes));
 
   const onBatchFile=useCallback(f=>{
     setBatchFile(f);setBatchResults([]);
@@ -2481,8 +2533,10 @@ function App(){
         try{
           const vals=pklModel.feature_names.map(fn=>parseFloat(row[fn]));
           if(vals.some(isNaN))return{...row,[(pklModel.target_name+"_pred")]:'ERROR'};
-          return{...row,[(pklModel.target_name+"_pred")]:+runPklPrediction(pklModel,vals).toFixed(6)};
-        }catch{return{...row,[(pklModel.target_name+"_pred")]:'ERROR'};}
+          const pred=runPklPrediction(pklModel,vals);
+          const predVal=typeof pred==='string'?pred:+pred.toFixed(6);
+          return{...row,[(pklModel.target_name+"_pred")]:predVal};
+        }catch(_e){return{...row,[(pklModel.target_name+"_pred")]:'ERROR'};}
       });
       setBatchResults(out);
     });
@@ -2686,15 +2740,26 @@ function App(){
           React.createElement(ClassificationPage,null)
         )),(mode==="predict"&&(
           React.createElement('div',{style:{display:"grid",gridTemplateColumns:"320px 1fr",gap:18,alignItems:"start"}},React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:14}},React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:18}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},'匯入 Emulator PKL'),React.createElement(DropZone,{label:'拖曳 .pkl 檔案至此',file:pklFile,onFile:onPklFile,accent:C.purple}),(pklError&&React.createElement('div',{style:{marginTop:10,fontSize:11,color:C.red,background:"#1a0808",border:"1px solid "+C.red+"33",borderRadius:6,padding:"8px 12px"}},'❌',(pklError)))),(pklModel&&(
-                React.createElement('div',{style:{background:C.card,border:"1px solid "+C.purple+"44",borderRadius:12,padding:18}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:14}},'模型資訊'),React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:9}},([
+                React.createElement('div',{style:{background:C.card,border:"1px solid "+C.purple+"44",borderRadius:12,padding:18}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:14}},'模型資訊'),React.createElement('div',{style:{display:"flex",flexDirection:"column",gap:9}},((isClsPkl?[
+                      ["任務類型","🔍 分類",C.cyan],
+                      ["演算法",(CLS_ALGOS[pklModel.algorithm]?.icon??"🔍")+" "+(pklModel.metadata?.algorithm_label??pklModel.algorithm),C.purple],
+                      ["目標變數",pklModel.target_name,C.amber],
+                      ["特徵數量",(pklModel.feature_names?.length)+" 個",C.cyan],
+                      ["類別數",(pklModel.classes?.length||"?")+" 類",C.purple],
+                      ["類別",(pklModel.classes||[]).join(" / "),C.text],
+                      ["Train Acc",pklModel.metadata?.train_metrics?.accuracy!=null?(pklModel.metadata.train_metrics.accuracy*100).toFixed(1)+"%":"—",C.green],
+                      ["Test Acc",pklModel.metadata?.test_metrics?.accuracy!=null?(pklModel.metadata.test_metrics.accuracy*100).toFixed(1)+"%":"—",C.cyan],
+                      ["建立時間",(pklModel.metadata?.created_at??'').slice(0,10)||"—",C.dim],
+                    ]:[
+                      ["任務類型","📊 迴歸",C.green],
                       ["演算法",(ALGOS[pklModel.algorithm]?.icon??"🤖")+" "+(pklModel.metadata?.algorithm_label??pklModel.algorithm),C.purple],
                       ["目標變數",pklModel.target_name,C.amber],
                       ["特徵數量",(pklModel.feature_names?.length)+" 個",C.cyan],
                       ["Train R²",pklModel.metadata?.train_metrics?.r2!=null?fmt(pklModel.metadata.train_metrics.r2):"—",C.green],
                       ["Test R²",pklModel.metadata?.test_metrics?.r2!=null?fmt(pklModel.metadata.test_metrics.r2):"—",C.cyan],
                       ["建立時間",(pklModel.metadata?.created_at??'').slice(0,10)||"—",C.dim],
-                    ].map(([k,v,c])=>(
-                      React.createElement('div',{key:k,style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}},React.createElement('span',{style:{fontSize:11,color:C.dim}},(k)),React.createElement('span',{style:{fontSize:12,fontWeight:700,color:c,fontFamily:"monospace"}},(v)))
+                    ]).map(([k,v,c])=>(
+                      React.createElement('div',{key:k,style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}},React.createElement('span',{style:{fontSize:11,color:C.dim}},(k)),React.createElement('span',{style:{fontSize:12,fontWeight:700,color:c,fontFamily:"monospace",textAlign:"right",wordBreak:"break-all"}},(v)))
                     )))))
               )),(pklModel&&(
                 React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:18}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:8}},'批量預測'),React.createElement('div',{style:{fontSize:11,color:C.dim,marginBottom:10}},'上傳含特徵欄位的 Excel / CSV，系統自動為每列計算預測值。'),React.createElement(DropZone,{label:'上傳批量資料 (.xlsx/.csv)\\n需含欄位：'+(pklModel.feature_names.join(", ")),file:batchFile,onFile:onBatchFile,accent:C.green}),(batchResults.length>0&&(
@@ -2711,16 +2776,27 @@ function App(){
                         React.createElement('div',{key:fn},React.createElement('label',{style:{fontSize:11,color:C.dim,display:"block",marginBottom:4,letterSpacing:0.5}},(fn)),React.createElement('input',{type:'number',value:inputVals[fn]??'',onChange:e=>setInputVals(p=>({...p,[fn]:e.target.value})),placeholder:'輸入數值…',style:{width:"100%",boxSizing:"border-box",background:"#0a1820",border:"1px solid "+(C.border),
                               borderRadius:6,padding:"9px 12px",color:C.text,fontSize:13,fontFamily:"monospace",outline:"none"}}))
                       )))),React.createElement('button',{onClick:runSinglePred,style:{width:"100%",padding:"13px",borderRadius:8,border:"none",background:C.purple,color:"#fff",fontSize:14,fontWeight:800,cursor:"pointer",letterSpacing:0.5}},'▶ 計算預測值'),(predError&&React.createElement('div',{style:{marginTop:10,fontSize:11,color:C.red}},'⚠',(predError)))),(prediction!=null&&(
-                    React.createElement('div',{style:{background:`linear-gradient(135deg,#0f1a2e,#1a0f2e)`,border:"1.5px solid "+(C.purple),borderRadius:12,padding:"28px 24px",textAlign:"center"}},React.createElement('div',{style:{fontSize:11,letterSpacing:3,color:C.purple,textTransform:"uppercase",marginBottom:8}},'預測結果'),React.createElement('div',{style:{fontSize:13,color:C.dim,marginBottom:4}},(pklModel.target_name)),React.createElement('div',{style:{fontSize:52,fontWeight:800,color:"#e8f4ff",fontFamily:"monospace",letterSpacing:-2,lineHeight:1}},(prediction.toFixed(4))),React.createElement('div',{style:{marginTop:12,display:"flex",justifyContent:"center",gap:24,fontSize:11,color:C.dim}},React.createElement('span',null,'演算法',React.createElement('span',{style:{color:C.purple}},(ALGOS[pklModel.algorithm]?.label??pklModel.algorithm))),React.createElement('span',null,'特徵數',React.createElement('span',{style:{color:C.cyan}},(pklModel.feature_names.length)))))
+                    React.createElement('div',{style:{background:"linear-gradient(135deg,#0f1a2e,#1a0f2e)",border:"1.5px solid "+(C.purple),borderRadius:12,padding:"28px 24px",textAlign:"center"}},React.createElement('div',{style:{fontSize:11,letterSpacing:3,color:C.purple,textTransform:"uppercase",marginBottom:8}},'預測結果'),React.createElement('div',{style:{fontSize:13,color:C.dim,marginBottom:4}},(pklModel.target_name)),(isClsPkl?(
+                        React.createElement('div',{style:{fontSize:52,fontWeight:800,color:C.cyan,fontFamily:"Syne",letterSpacing:-1,lineHeight:1}},(String(prediction)))
+                      ):(
+                        React.createElement('div',{style:{fontSize:52,fontWeight:800,color:"#e8f4ff",fontFamily:"monospace",letterSpacing:-2,lineHeight:1}},(typeof prediction==='number'?prediction.toFixed(4):String(prediction)))
+                      )),React.createElement('div',{style:{marginTop:12,display:"flex",justifyContent:"center",gap:24,fontSize:11,color:C.dim}},React.createElement('span',null,'演算法',React.createElement('span',{style:{color:C.purple}},((isClsPkl?CLS_ALGOS:ALGOS)[pklModel.algorithm]?.label??pklModel.algorithm))),React.createElement('span',null,'特徵數',React.createElement('span',{style:{color:C.cyan}},(pklModel.feature_names.length)))))
                   )),(pklModel.metadata?.train_metrics&&(
-                    React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:16}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},'模型訓練指標參考'),React.createElement('div',{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:9}},([["Train R²",pklModel.metadata.train_metrics.r2,C.cyan],
+                    React.createElement('div',{style:{background:C.card,border:"1px solid "+(C.border),borderRadius:12,padding:16}},React.createElement('div',{style:{fontSize:10,letterSpacing:2,color:C.dim,textTransform:"uppercase",marginBottom:12}},'模型訓練指標參考'),React.createElement('div',{style:{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:9}},((isClsPkl?[
+                          ["Train Acc",pklModel.metadata.train_metrics.accuracy!=null?(pklModel.metadata.train_metrics.accuracy*100).toFixed(1)+"%":null,C.cyan],
+                          ["Test Acc",pklModel.metadata.test_metrics?.accuracy!=null?(pklModel.metadata.test_metrics.accuracy*100).toFixed(1)+"%":null,C.amber],
+                          ["Train F1",pklModel.metadata.train_metrics.macro_f1!=null?(pklModel.metadata.train_metrics.macro_f1*100).toFixed(1)+"%":null,C.green],
+                          ["Test F1",pklModel.metadata.test_metrics?.macro_f1!=null?(pklModel.metadata.test_metrics.macro_f1*100).toFixed(1)+"%":null,C.purple],
+                          ["類別",pklModel.classes?.join(" / ")||"—",C.text],
+                        ]:[
+                          ["Train R²",pklModel.metadata.train_metrics.r2,C.cyan],
                           ["Test R²",pklModel.metadata.test_metrics?.r2,C.amber],
                           ["Train RMSE",pklModel.metadata.train_metrics.rmse,C.text],
                           ["Test RMSE",pklModel.metadata.test_metrics?.rmse,C.text],
                           ["MAE",(pklModel.metadata.test_metrics??pklModel.metadata.train_metrics)?.mae,C.green],
                           ["MAPE",(pklModel.metadata.test_metrics??pklModel.metadata.train_metrics)?.mape,C.purple],
-                        ].map(([l,v,c])=>(
-                          React.createElement('div',{key:l,style:{background:C.card2,borderRadius:7,padding:"8px 12px"}},React.createElement('div',{style:{fontSize:9,letterSpacing:1,color:C.dim,marginBottom:3}},(l)),React.createElement('div',{style:{fontSize:14,fontWeight:700,color:c,fontFamily:"monospace"}},(v!=null?fmt(v):"—")))
+                        ]).map(([l,v,c])=>(
+                          React.createElement('div',{key:l,style:{background:C.card2,borderRadius:7,padding:"8px 12px"}},React.createElement('div',{style:{fontSize:9,letterSpacing:1,color:C.dim,marginBottom:3}},(l)),React.createElement('div',{style:{fontSize:14,fontWeight:700,color:c,fontFamily:"monospace",wordBreak:"break-all"}},(v!=null?(typeof v==='string'?v:fmt(v)):"—")))
                         )))))
                   )))
               ))))
